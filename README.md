@@ -1,4 +1,4 @@
-# ⚙ MangaFactory
+# MangaFactory
 
 **Download · Process · Package**
 
