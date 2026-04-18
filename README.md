@@ -1,4 +1,4 @@
-# MangaFactory
+# MangaFactory v1.2
 
 **Download · Process · Package**
 
@@ -15,7 +15,7 @@ MangaFactory is a self-contained, single-file Python app that puts a clean brows
 - **Gap detection** — warns you when chapter numbers have holes (e.g. Ch. 12 → Ch. 15), so you know what's not yet translated
 - **Deduplication** — only one entry per chapter number, no duplicates from multiple scanlation groups
 - Filter chapters by keyword; select/deselect by individual chapter or entire volume at once
-- Optional **CBZ packaging** — after download, chapters are automatically grouped by MangaDex volume and packaged into one `.cbz` file per volume
+- Optional **CBZ packaging** — after download, chapters are automatically grouped by MangaDex volume and packaged into one `.cbz` file per volume. Once a volume's `.cbz` is written, the raw page images that went into it are removed, so the output folder only contains the packaged volumes. With CBZ packaging off, the raw images are left in place.
 - Real-time progress: live page-by-page and chapter-by-chapter progress bars with a streaming log
 - Already-downloaded pages are skipped automatically on re-runs
 - Output defaults to `~/Downloads/manga`; fully configurable
@@ -100,6 +100,8 @@ Press `Ctrl+C` in the terminal to quit.
     series_slug_vol_unnumbered.cbz   ← chapters with no volume assigned
 ```
 
+Raw page images are deleted automatically after each volume's `.cbz` is built, so only the packaged volumes remain. If CBZ packaging is turned off, nothing is deleted — the raw images are left exactly where they were downloaded.
+
 **CBZ Processor output (Single CBZ mode):**
 ```
 output/
@@ -135,6 +137,7 @@ Downloads use the [MangaDex API](https://api.mangadex.org) with respectful rate-
 
 - Only English-translated chapters are fetched from MangaDex
 - If a chapter has no volume assigned on MangaDex, it is placed in a `vol_unnumbered.cbz` when CBZ packaging is enabled
+- When CBZ packaging is enabled, raw page images are removed after each volume's `.cbz` is successfully written; if the CBZ step fails for a volume, that volume's raw files are kept so you can retry without re-downloading
 - The CBZ Processor uses natural sort order for filenames, so `ch9` correctly comes before `ch10`
 - Dependencies are installed into `.mdf_libs/` next to the script and do not touch your system Python
 
