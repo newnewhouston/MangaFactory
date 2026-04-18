@@ -266,12 +266,24 @@ def build_cbz_worker(session_id, series_slug, completed_chapters, output_dir, q)
         q.put({"type": "cbz_building", "vol": vol_key, "cbz": cbz_name,
                "file_count": len(files)})
         try:
+            zipped_files = []
             with zipfile.ZipFile(cbz_path, 'w', zipfile.ZIP_STORED) as zf:
                 for fp in files:
                     if os.path.exists(fp):
                         zf.write(fp, os.path.basename(fp))
+                        zipped_files.append(fp)
+            # CBZ built successfully — remove the raw image files that went
+            # into it so the output folder only contains the packaged volumes.
+            removed = 0
+            for fp in zipped_files:
+                try:
+                    os.remove(fp)
+                    removed += 1
+                except OSError:
+                    pass
             q.put({"type": "cbz_done", "vol": vol_key, "cbz": cbz_name,
-                   "index": i + 1, "total": total_vols})
+                   "index": i + 1, "total": total_vols,
+                   "raw_removed": removed})
         except Exception as e:
             q.put({"type": "cbz_error", "vol": vol_key, "error": str(e)})
     q.put({"type": "all_done"})
@@ -649,7 +661,7 @@ HTML = r"""<!DOCTYPE html>
       <h1>Manga<span>Factory</span></h1>
       <div style="font-size:12px; color:var(--muted); margin-top:3px;">Download · Process · Package</div>
     </div>
-    <div class="version">v1.0.0</div>
+    <div class="version">v1.2</div>
   </header>
 
   <div class="tabs">
@@ -709,7 +721,7 @@ HTML = r"""<!DOCTYPE html>
           </label>
           <div>
             <div class="cbz-label">Package into CBZ volumes</div>
-            <div class="cbz-sublabel">Groups chapters by MangaDex volume → creates one .cbz per volume</div>
+            <div class="cbz-sublabel">Groups chapters by MangaDex volume → creates one .cbz per volume (raw images are removed after each volume is packaged)</div>
           </div>
         </div>
         <button class="btn btn-success" id="dl-btn" onclick="startDownload()">Download Selected</button>
@@ -980,7 +992,7 @@ async function startDownload() {
     if (msg.type === 'chapter_error') { log(`  ✗  Chapter ${msg.chapter} failed: ${msg.error}`, 'err'); doneChs++; updateChProgress(doneChs, totalChs); }
     if (msg.type === 'cbz_start') { document.getElementById('cbz-progress-section').style.display = 'block'; document.getElementById('current-chapter-info').textContent = `Building ${msg.total} CBZ volume${msg.total > 1 ? 's' : ''}...`; log(`─── Packaging ${msg.total} CBZ volume(s) ───`, 'info'); }
     if (msg.type === 'cbz_building') { const vl = msg.vol === 'unnumbered' ? 'Unnumbered' : `Vol. ${msg.vol}`; addCbzRow(msg.vol, `building-${msg.vol}`, '⧗', 'building', `${vl} → ${msg.cbz} (${msg.file_count} files)`); }
-    if (msg.type === 'cbz_done') { const vl = msg.vol === 'unnumbered' ? 'Unnumbered' : `Vol. ${msg.vol}`; updateCbzRow(`building-${msg.vol}`, '✓', 'done', `${vl} → ${msg.cbz}`); log(`  ✓  ${msg.cbz}`, 'ok'); }
+    if (msg.type === 'cbz_done') { const vl = msg.vol === 'unnumbered' ? 'Unnumbered' : `Vol. ${msg.vol}`; const cleanup = msg.raw_removed ? ` (cleaned up ${msg.raw_removed} raw file${msg.raw_removed === 1 ? '' : 's'})` : ''; updateCbzRow(`building-${msg.vol}`, '✓', 'done', `${vl} → ${msg.cbz}${cleanup}`); log(`  ✓  ${msg.cbz}${cleanup}`, 'ok'); }
     if (msg.type === 'cbz_error') { updateCbzRow(`building-${msg.vol}`, '✗', 'err', `Vol. ${msg.vol} failed: ${msg.error}`); log(`  ✗  CBZ Vol. ${msg.vol}: ${msg.error}`, 'err'); }
     if (msg.type === 'all_done') {
       eventSource.close();
