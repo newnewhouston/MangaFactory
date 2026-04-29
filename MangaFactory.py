@@ -62,11 +62,12 @@ from flask import Flask, request, jsonify, Response
 
 app = Flask(__name__)
 MANGADEX_API = "https://api.mangadex.org"
-DOWNLOAD_BASE = os.path.expanduser("~/Downloads/manga")
+DOWNLOAD_BASE = os.path.expanduser("~/Desktop/MangaFactory")
 download_sessions = {}   # MDF download sessions
 cbz_sessions = {}        # CBZ processing sessions
 
 IMAGE_EXTS = {"jpg", "jpeg", "png", "gif", "webp", "bmp"}
+CBZ_UPLOAD_DIR = os.path.join(_HERE, ".mdf_uploads")
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -651,6 +652,14 @@ HTML = r"""<!DOCTYPE html>
   .cbz-mode-btn:hover { color: var(--text); border-color: var(--accent2); }
   .cbz-mode-btn.active { background: rgba(232,68,26,0.08); border-color: var(--accent); color: var(--accent); }
   .empty-state { padding: 32px; text-align: center; color: var(--muted); font-family: var(--mono); font-size: 12px; border: 1px dashed var(--border); }
+
+  /* Drag & drop zone */
+  .drop-zone { border: 2px dashed var(--border); padding: 32px 24px; text-align: center; cursor: default; transition: border-color 0.2s, background 0.2s; }
+  .drop-zone.drag-over { border-color: var(--accent); background: rgba(232,68,26,0.05); }
+  .drop-zone-icon { font-size: 32px; margin-bottom: 10px; }
+  .drop-zone-label { font-size: 14px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+  .drop-zone-hint { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .upload-status { font-family: var(--mono); font-size: 11px; color: var(--accent2); margin-top: 10px; min-height: 1em; }
 </style>
 </head>
 <body>
@@ -661,7 +670,7 @@ HTML = r"""<!DOCTYPE html>
       <h1>Manga<span>Factory</span></h1>
       <div style="font-size:12px; color:var(--muted); margin-top:3px;">Download · Process · Package</div>
     </div>
-    <div class="version">v1.2</div>
+    <div class="version">v1.3</div>
   </header>
 
   <div class="tabs">
@@ -712,7 +721,7 @@ HTML = r"""<!DOCTYPE html>
         <div class="card-title">Download Settings</div>
         <div class="outdir-row">
           <div class="outdir-label">Output Folder:</div>
-          <input type="text" id="output-dir" style="flex:1; font-size:12px;" value="~/Downloads/manga" />
+          <input type="text" id="output-dir" style="flex:1; font-size:12px;" value="~/Desktop/MangaFactory" />
         </div>
         <div class="cbz-toggle-row">
           <label class="toggle-wrap">
@@ -760,14 +769,19 @@ HTML = r"""<!DOCTYPE html>
   <!-- ─── CBZ PROCESSOR TAB ────────────────────────────────────────────────── -->
   <div class="tab-content" id="tab-cbz">
 
+    <!-- Source folder elements kept hidden for the Download → CBZ handoff -->
+    <input type="text" id="cbz-source-input" style="display:none" />
+    <div id="cbz-loading-spinner" style="display:none; font-family:var(--mono); font-size:12px; color:var(--muted);"><span class="spinner">◌</span> Scanning...</div>
+
     <div class="card">
-      <div class="card-title">Source Folder</div>
-      <div class="input-row">
-        <input type="text" id="cbz-source-input" placeholder="~/Downloads/manga/series_slug" />
-        <button class="btn" id="cbz-scan-btn" onclick="cbzScan()">Scan</button>
+      <div class="card-title">Add Files</div>
+      <div class="drop-zone" id="cbz-drop-zone" style="cursor:pointer">
+        <div class="drop-zone-icon">📂</div>
+        <div class="drop-zone-label">Drop files here or click to browse</div>
+        <div class="drop-zone-hint">.cbz files — or image files (jpg, png, webp…) to bundle into a new CBZ</div>
       </div>
-      <div id="cbz-loading-spinner"><span class="spinner">◌</span> Scanning...</div>
-      <div class="cbz-field-hint">Folder containing one or more .cbz files. Chapter numbers will be auto-detected from filenames.</div>
+      <input type="file" id="cbz-file-picker" accept=".cbz,.jpg,.jpeg,.png,.gif,.webp,.bmp" multiple style="display:none" />
+      <div class="upload-status" id="cbz-upload-status"></div>
     </div>
 
     <div id="cbz-file-section" style="display:none">
@@ -805,7 +819,7 @@ HTML = r"""<!DOCTYPE html>
         <div class="card-title">Output</div>
         <div class="outdir-row">
           <div class="outdir-label">Output Folder:</div>
-          <input type="text" id="cbz-output-dir" style="flex:1; font-size:12px;" value="~/Downloads/manga/output" />
+          <input type="text" id="cbz-output-dir" style="flex:1; font-size:12px;" value="~/Desktop/MangaFactory" />
         </div>
         <label class="cbz-field-label" style="margin-top: 10px;">Output Mode</label>
         <div class="cbz-mode-row">
@@ -817,7 +831,6 @@ HTML = r"""<!DOCTYPE html>
       </div>
     </div>
 
-    <div id="cbz-empty-state" class="empty-state">Enter a folder path above and click Scan to begin.</div>
 
     <div id="cbz-progress-wrap" style="display:none">
       <div class="card">
@@ -1055,8 +1068,6 @@ async function cbzScan() {
     cbzQueue = data.files.map(f => ({ id: cbzNextId++, ...f, chapter: f.detected_chapter }));
     cbzRenderFiles();
     document.getElementById('cbz-file-section').style.display = cbzQueue.length ? 'block' : 'none';
-    document.getElementById('cbz-empty-state').style.display = cbzQueue.length ? 'none' : 'block';
-    if (!cbzQueue.length) document.getElementById('cbz-empty-state').textContent = 'No .cbz files found in that folder.';
   } catch (e) {
     alert('Failed: ' + e.message);
   } finally {
@@ -1134,8 +1145,6 @@ function cbzClearFiles() {
   cbzQueue = [];
   cbzRenderFiles();
   document.getElementById('cbz-file-section').style.display = 'none';
-  document.getElementById('cbz-empty-state').style.display = 'block';
-  document.getElementById('cbz-empty-state').textContent = 'Enter a folder path above and click Scan to begin.';
 }
 
 document.getElementById('cbz-volume-input').addEventListener('input', e => {
@@ -1261,7 +1270,105 @@ async function cbzCancel() {
   document.getElementById('cbz-cancel-btn').textContent = 'Cancel';
 }
 
-document.getElementById('cbz-source-input').addEventListener('keydown', e => { if (e.key === 'Enter') cbzScan(); });
+/* ─────────────────────────────────────────────────────────────────────────
+   Drag & drop / click-to-browse support for CBZ Processor
+   ───────────────────────────────────────────────────────────────────────── */
+(function () {
+  const zone = document.getElementById('cbz-drop-zone');
+  const picker = document.getElementById('cbz-file-picker');
+  const statusEl = document.getElementById('cbz-upload-status');
+  let dragCounter = 0;  // track nested enter/leave events
+
+  const IMAGE_EXTS_JS = new Set(['jpg','jpeg','png','gif','webp','bmp']);
+  function isImage(name) { return IMAGE_EXTS_JS.has(name.split('.').pop().toLowerCase()); }
+  function isCbz(name)   { return name.toLowerCase().endsWith('.cbz'); }
+
+  // Click → open file picker
+  zone.addEventListener('click', () => picker.click());
+  picker.addEventListener('change', () => {
+    const all = [...picker.files];
+    picker.value = '';  // reset so the same file can be re-selected later
+    routeFiles(all);
+  });
+
+  zone.addEventListener('dragenter', e => {
+    e.preventDefault();
+    dragCounter++;
+    zone.classList.add('drag-over');
+  });
+  zone.addEventListener('dragover', e => { e.preventDefault(); });
+  zone.addEventListener('dragleave', () => {
+    dragCounter--;
+    if (dragCounter <= 0) { dragCounter = 0; zone.classList.remove('drag-over'); }
+  });
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    dragCounter = 0;
+    zone.classList.remove('drag-over');
+    routeFiles([...e.dataTransfer.files]);
+  });
+
+  function routeFiles(all) {
+    const cbzFiles   = all.filter(f => isCbz(f.name));
+    const imageFiles = all.filter(f => isImage(f.name));
+    const unknown    = all.length - cbzFiles.length - imageFiles.length;
+    if (!cbzFiles.length && !imageFiles.length) {
+      statusEl.textContent = 'No supported files detected (.cbz or image files).';
+      return;
+    }
+    if (unknown > 0) {
+      statusEl.textContent = `Skipping ${unknown} unsupported file(s)...`;
+    }
+    if (cbzFiles.length)   cbzHandleCbzFiles(cbzFiles);
+    if (imageFiles.length) cbzHandleImageFiles(imageFiles);
+  }
+
+  async function cbzHandleCbzFiles(files) {
+    statusEl.textContent = `Uploading ${files.length} CBZ file(s)...`;
+    let added = 0;
+    for (const file of files) {
+      statusEl.textContent = `Uploading ${file.name}...`;
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        const res = await fetch('/api/cbz/upload', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (data.error) { statusEl.textContent = `✗ ${file.name}: ${data.error}`; continue; }
+        cbzAddToQueue(data);
+        added++;
+      } catch (err) {
+        statusEl.textContent = `✗ Failed to upload ${file.name}: ${err.message}`;
+      }
+    }
+    statusEl.textContent = `✓ Added ${added} of ${files.length} CBZ file(s).`;
+    setTimeout(() => { statusEl.textContent = ''; }, 3000);
+  }
+
+  async function cbzHandleImageFiles(files) {
+    statusEl.textContent = `Bundling ${files.length} image(s) into a CBZ...`;
+    try {
+      const fd = new FormData();
+      files.forEach(f => fd.append('files', f));
+      const res = await fetch('/api/cbz/upload-images', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (data.error) { statusEl.textContent = `✗ ${data.error}`; return; }
+      cbzAddToQueue(data);
+      statusEl.textContent = `✓ Bundled ${files.length} image(s) — set the chapter number below.`;
+      setTimeout(() => { statusEl.textContent = ''; }, 4000);
+    } catch (err) {
+      statusEl.textContent = `✗ Failed to bundle images: ${err.message}`;
+    }
+  }
+
+  function cbzAddToQueue(data) {
+    const item = { id: cbzNextId++, ...data, chapter: data.detected_chapter };
+    cbzQueue.push(item);
+    document.getElementById('cbz-file-section').style.display = 'block';
+    document.getElementById('cbz-file-list').appendChild(cbzRenderRow(item));
+    document.getElementById('cbz-file-count').textContent =
+      `${cbzQueue.length} file${cbzQueue.length !== 1 ? 's' : ''}`;
+  }
+})();
 </script>
 </body>
 </html>"""
@@ -1368,6 +1475,74 @@ def api_cancel(session_id):
 
 # ── Routes: CBZ Processor ─────────────────────────────────────────────────────
 
+@app.route("/api/cbz/upload", methods=["POST"])
+def api_cbz_upload():
+    if 'file' not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+    f = request.files['file']
+    orig_name = f.filename or ""
+    if not orig_name.lower().endswith('.cbz'):
+        return jsonify({"error": "Only .cbz files are accepted"}), 400
+    os.makedirs(CBZ_UPLOAD_DIR, exist_ok=True)
+    # Sanitise filename to avoid path traversal
+    safe_name = re.sub(r'[^\w\s\-.]', '_', os.path.basename(orig_name))
+    dest_path = os.path.join(CBZ_UPLOAD_DIR, safe_name)
+    # Avoid clobbering an existing file with a different timestamp suffix
+    if os.path.exists(dest_path):
+        base, ext = os.path.splitext(safe_name)
+        dest_path = os.path.join(CBZ_UPLOAD_DIR,
+                                 f"{base}_{int(time.time() * 1000)}{ext}")
+    f.save(dest_path)
+    size = os.path.getsize(dest_path)
+    detected = cbz_detect_chapter_number(orig_name)
+    return jsonify({
+        "path": dest_path,
+        "name": orig_name,
+        "size": size,
+        "detected_chapter": detected,
+    })
+
+@app.route("/api/cbz/upload-images", methods=["POST"])
+def api_cbz_upload_images():
+    files = request.files.getlist('files')
+    image_files = [f for f in files
+                   if (f.filename or '').rsplit('.', 1)[-1].lower() in IMAGE_EXTS]
+    if not image_files:
+        return jsonify({"error": "No supported image files found"}), 400
+
+    ts = int(time.time() * 1000)
+    img_dir = os.path.join(CBZ_UPLOAD_DIR, f"imgbundle_{ts}")
+    os.makedirs(img_dir, exist_ok=True)
+
+    saved = []
+    for f in image_files:
+        safe_name = re.sub(r'[^\w\s\-.]', '_', os.path.basename(f.filename or f'image_{len(saved)}'))
+        dest = os.path.join(img_dir, safe_name)
+        f.save(dest)
+        saved.append(dest)
+
+    # Sort naturally so page order matches the filenames the user intended
+    saved.sort(key=lambda p: cbz_sort_key(os.path.basename(p)))
+
+    # Pack into a temporary CBZ
+    cbz_name = f"imgbundle_{ts}.cbz"
+    cbz_path = os.path.join(CBZ_UPLOAD_DIR, cbz_name)
+    with zipfile.ZipFile(cbz_path, 'w', zipfile.ZIP_STORED) as zf:
+        for fp in saved:
+            zf.write(fp, os.path.basename(fp))
+
+    # Temp image folder no longer needed
+    shutil.rmtree(img_dir, ignore_errors=True)
+
+    size = os.path.getsize(cbz_path)
+    display_name = f"{len(saved)} images (bundled)"
+    return jsonify({
+        "path": cbz_path,
+        "name": display_name,
+        "size": size,
+        "detected_chapter": "",   # user must fill in
+    })
+
 @app.route("/api/cbz/scan", methods=["POST"])
 def api_cbz_scan():
     body = request.json or {}
@@ -1433,6 +1608,8 @@ def api_cbz_cancel(session_id):
 
 if __name__ == "__main__":
     PORT = 5000
+    _output_dir = os.path.expanduser("~/Desktop/MangaFactory")
+    os.makedirs(_output_dir, exist_ok=True)
     print(f"\n  ⚙  MangaFactory")
     print(f"  → Opening http://localhost:{PORT} in your browser...")
     print(f"  → Press Ctrl+C to quit\n")
