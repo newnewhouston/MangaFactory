@@ -22,7 +22,8 @@ import subprocess
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _LIBS = os.path.join(_HERE, ".mdf_libs")
-REQUIRED = {"flask": "flask>=3.0", "requests": "requests>=2.31"}
+REQUIRED = {"flask": "flask>=3.0", "requests": "requests>=2.31",
+            "cloudscraper": "cloudscraper>=1.2"}
 
 def _ensure_deps():
     missing = []
@@ -68,6 +69,7 @@ cbz_sessions = {}        # CBZ processing sessions
 
 IMAGE_EXTS = {"jpg", "jpeg", "png", "gif", "webp", "bmp"}
 CBZ_UPLOAD_DIR = os.path.join(_HERE, ".mdf_uploads")
+_wc_scraper = None
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -193,6 +195,116 @@ def extract_manga_id(url_or_id):
     if m:
         return url_or_id
     return None
+
+# ── WeebCentral helpers ───────────────────────────────────────────────────────
+
+def get_wc_scraper():
+    global _wc_scraper
+    if _wc_scraper is None:
+        import cloudscraper
+        _wc_scraper = cloudscraper.create_scraper()
+    return _wc_scraper
+
+def extract_wc_id(url_or_id):
+    url_or_id = url_or_id.strip()
+    m = re.search(r'weebcentral\.com/series/([A-Z0-9]+)', url_or_id)
+    if m:
+        return m.group(1)
+    if re.match(r'^[A-Z0-9]{26}$', url_or_id):
+        return url_or_id
+    return None
+
+def wc_get_manga_info(series_id):
+    sc = get_wc_scraper()
+    r = sc.get(f"https://weebcentral.com/series/{series_id}", timeout=15)
+    r.raise_for_status()
+    m = re.search(r'property="og:title" content="([^"]+)"', r.text)
+    if m:
+        title = re.sub(r'\s*\|\s*Weeb Central\s*$', '', m.group(1)).strip()
+        return {"id": series_id, "title": title, "source": "weebcentral"}
+    m = re.search(r'<h1[^>]*>([^<]+)</h1>', r.text)
+    if m:
+        return {"id": series_id, "title": m.group(1).strip(), "source": "weebcentral"}
+    return {"id": series_id, "title": "Unknown", "source": "weebcentral"}
+
+def wc_get_all_chapters(series_id):
+    sc = get_wc_scraper()
+    r = sc.get(
+        f"https://weebcentral.com/series/{series_id}/full-chapter-list",
+        headers={"HX-Request": "true"},
+        timeout=30,
+    )
+    r.raise_for_status()
+    entries = re.findall(
+        r'href="https://weebcentral\.com/chapters/([A-Z0-9]+)"'
+        r'.*?<span class="">([^<]+)</span>',
+        r.text, re.DOTALL
+    )
+    chapters = []
+    for ch_id, ch_label in reversed(entries):  # reverse so ch1 is first
+        ch_label = ch_label.strip()
+        num_m = re.search(r'[\d.]+$', ch_label)
+        num_str = num_m.group(0) if num_m else ch_label
+        chapters.append({
+            "id": ch_id,
+            "chapter": num_str,
+            "title": "",
+            "pages": 0,
+            "volume": "",
+            "source": "weebcentral",
+        })
+    return chapters
+
+def wc_download_chapter_worker(session_id, chapter, series_slug, output_dir, q):
+    ch_id = chapter["id"]
+    ch_num = format_chapter_num(chapter["chapter"])
+    prefix = f"{series_slug}_ch{ch_num}"
+    try:
+        sc = get_wc_scraper()
+        r = sc.get(
+            f"https://weebcentral.com/chapters/{ch_id}/images"
+            f"?is_prev=False&current_page=1&reading_style=long_strip",
+            headers={"HX-Request": "true"},
+            timeout=20,
+        )
+        r.raise_for_status()
+        img_urls = re.findall(
+            r'src="(https://[^"]+\.(?:jpg|jpeg|png|webp|gif))"',
+            r.text, re.IGNORECASE
+        )
+        img_urls = [u for u in img_urls if "broken_image" not in u]
+        total = len(img_urls)
+        q.put({"type": "chapter_start", "chapter": chapter["chapter"], "total": total})
+        downloaded_files = []
+        for i, img_url in enumerate(img_urls):
+            ext = img_url.rsplit('.', 1)[-1].split('?')[0] if '.' in img_url else 'jpg'
+            page_num = str(i + 1).zfill(3)
+            out_name = f"{prefix}_{page_num}.{ext}"
+            out_path = os.path.join(output_dir, out_name)
+            if os.path.exists(out_path):
+                q.put({"type": "page_done", "page": i + 1, "total": total,
+                       "file": out_name, "skipped": True})
+                downloaded_files.append(out_path)
+                continue
+            try:
+                img_r = requests.get(img_url, timeout=20,
+                                     headers={"Referer": "https://weebcentral.com/"})
+                img_r.raise_for_status()
+                with open(out_path, 'wb') as f:
+                    f.write(img_r.content)
+                downloaded_files.append(out_path)
+                q.put({"type": "page_done", "page": i + 1, "total": total,
+                       "file": out_name, "skipped": False})
+            except Exception as e:
+                q.put({"type": "page_error", "page": i + 1, "error": str(e)})
+            time.sleep(0.2)
+        q.put({"type": "chapter_done", "chapter": chapter["chapter"],
+               "files": downloaded_files})
+    except Exception as e:
+        q.put({"type": "chapter_error", "chapter": chapter["chapter"],
+               "error": str(e)})
+
+# ── MangaDex download worker ──────────────────────────────────────────────────
 
 def download_chapter_worker(session_id, chapter, series_slug, output_dir, q):
     ch_id = chapter["id"]
@@ -684,7 +796,7 @@ HTML = r"""<!DOCTYPE html>
     <div class="card">
       <div class="card-title">Series URL or ID</div>
       <div class="input-row">
-        <input type="text" id="url-input" placeholder="https://mangadex.org/title/... or UUID" />
+        <input type="text" id="url-input" placeholder="https://mangadex.org/title/... or https://weebcentral.com/series/..." />
         <button class="btn" id="fetch-btn" onclick="fetchSeries()">Fetch</button>
       </div>
       <div id="loading-spinner"><span class="spinner">◌</span> Fetching chapter list...</div>
@@ -730,7 +842,7 @@ HTML = r"""<!DOCTYPE html>
           </label>
           <div>
             <div class="cbz-label">Package into CBZ volumes</div>
-            <div class="cbz-sublabel">Groups chapters by MangaDex volume → creates one .cbz per volume (raw images are removed after each volume is packaged)</div>
+            <div class="cbz-sublabel" id="cbz-sublabel">Groups chapters by volume → creates one .cbz per volume (raw images are removed after each volume is packaged)</div>
           </div>
         </div>
         <button class="btn btn-success" id="dl-btn" onclick="startDownload()">Download Selected</button>
@@ -874,6 +986,7 @@ document.querySelectorAll('.tab').forEach(btn => {
    MangaDex download tab (unchanged behaviour from MangaDexFactory 2.0)
    ───────────────────────────────────────────────────────────────────────── */
 let allChapters = [], allVolumes = [], mangaInfo = null, sessionId = null, eventSource = null;
+let currentSource = 'mangadex';
 let doneChs = 0, totalChs = 0;
 let lastDownloadContext = null;   // used to pre-fill the CBZ processor
 
@@ -893,8 +1006,16 @@ async function fetchSeries() {
     mangaInfo = data.manga;
     allChapters = data.chapters;
     allVolumes = data.volumes || [];
+    currentSource = data.manga.source || 'mangadex';
     document.getElementById('manga-title-display').textContent = data.manga.title;
-    document.getElementById('manga-meta').textContent = `${allChapters.length} chapters · ${allVolumes.length} volumes · ${allChapters.reduce((s,c)=>s+c.pages,0)} total pages`;
+    const srcBadge = currentSource === 'weebcentral' ? ' · WeebCentral' : ' · MangaDex';
+    const volPart = allVolumes.length ? ` · ${allVolumes.length} volumes` : '';
+    const pgPart = allChapters.reduce((s,c)=>s+c.pages,0);
+    document.getElementById('manga-meta').textContent = `${allChapters.length} chapters${volPart}${pgPart ? ' · ' + pgPart + ' total pages' : ''}${srcBadge}`;
+    const sublabel = document.getElementById('cbz-sublabel');
+    if (sublabel) sublabel.textContent = currentSource === 'weebcentral'
+      ? 'Packages all selected chapters into one .cbz (raw images are removed after packaging)'
+      : 'Groups chapters by volume → creates one .cbz per volume (raw images are removed after each volume is packaged)';
     document.getElementById('manga-info').style.display = 'flex';
     if (data.gaps && data.gaps.length > 0) {
       document.getElementById('gap-text').textContent = `Gaps found between: ${data.gaps.map(g=>`Ch.${g.from} → Ch.${g.to}`).join(', ')}. These chapters may not be translated yet.`;
@@ -986,7 +1107,7 @@ async function startDownload() {
   document.getElementById('cbz-vol-list').innerHTML = '';
   totalChs = selected.length; doneChs = 0;
   updateChProgress(0, totalChs); updatePageProgress(0, 0);
-  const res = await fetch('/api/download', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ manga_id: mangaInfo.id, manga_title: mangaInfo.title, chapter_ids: selected, output_dir: outputDir, make_cbz: makeCbz }) });
+  const res = await fetch('/api/download', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ manga_id: mangaInfo.id, manga_title: mangaInfo.title, chapter_ids: selected, output_dir: outputDir, make_cbz: makeCbz, source: currentSource }) });
   const data = await res.json();
   if (data.error) { alert(data.error); return; }
   sessionId = data.session_id;
@@ -1383,11 +1504,28 @@ def index():
 def api_fetch():
     body = request.json
     raw = body.get("url", "").strip()
+
+    # ── WeebCentral ───────────────────────────────────────────────────────────
+    if "weebcentral.com" in raw or re.match(r'^[A-Z0-9]{26}$', raw):
+        series_id = extract_wc_id(raw)
+        if not series_id:
+            return jsonify({"error": "Invalid WeebCentral URL or ID"}), 400
+        try:
+            info = wc_get_manga_info(series_id)
+            chapters = wc_get_all_chapters(series_id)
+            gaps = detect_gaps(chapters)
+            return jsonify({"manga": info, "chapters": chapters,
+                            "gaps": gaps, "volumes": []})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    # ── MangaDex ──────────────────────────────────────────────────────────────
     manga_id = extract_manga_id(raw)
     if not manga_id:
-        return jsonify({"error": "Invalid MangaDex URL or ID"}), 400
+        return jsonify({"error": "Invalid MangaDex or WeebCentral URL / ID"}), 400
     try:
         info = get_manga_info(manga_id)
+        info["source"] = "mangadex"
         chapters = get_all_chapters(manga_id)
         chapters = deduplicate_chapters(chapters)
         gaps = detect_gaps(chapters)
@@ -1415,19 +1553,21 @@ def api_download():
     chapter_ids = body.get("chapter_ids", [])
     output_dir = body.get("output_dir", DOWNLOAD_BASE)
     make_cbz = body.get("make_cbz", False)
+    source = body.get("source", "mangadex")
     output_dir = os.path.expanduser(output_dir)
     os.makedirs(output_dir, exist_ok=True)
     series_slug = slugify(manga_title)
     session_id = f"{manga_id}_{int(time.time())}"
     q = queue.Queue()
     download_sessions[session_id] = q
+    worker_fn = wc_download_chapter_worker if source == "weebcentral" else download_chapter_worker
     def run():
         completed_chapters = []
         for ch in chapter_ids:
             if download_sessions.get(session_id) is None:
                 break
             ch_q = queue.Queue()
-            t = threading.Thread(target=download_chapter_worker,
+            t = threading.Thread(target=worker_fn,
                                  args=(session_id, ch, series_slug, output_dir, ch_q),
                                  daemon=True)
             t.start()
@@ -1473,7 +1613,7 @@ def api_cancel(session_id):
         download_sessions[session_id] = None
     return jsonify({"ok": True})
 
-# ── Routes: CBZ Processor ─────────────────────────────────────────────────────
+# ── Routes: CBZ Processor ────────────────────────────────────────────
 
 @app.route("/api/cbz/upload", methods=["POST"])
 def api_cbz_upload():
@@ -1484,10 +1624,8 @@ def api_cbz_upload():
     if not orig_name.lower().endswith('.cbz'):
         return jsonify({"error": "Only .cbz files are accepted"}), 400
     os.makedirs(CBZ_UPLOAD_DIR, exist_ok=True)
-    # Sanitise filename to avoid path traversal
     safe_name = re.sub(r'[^\w\s\-.]', '_', os.path.basename(orig_name))
     dest_path = os.path.join(CBZ_UPLOAD_DIR, safe_name)
-    # Avoid clobbering an existing file with a different timestamp suffix
     if os.path.exists(dest_path):
         base, ext = os.path.splitext(safe_name)
         dest_path = os.path.join(CBZ_UPLOAD_DIR,
@@ -1509,38 +1647,29 @@ def api_cbz_upload_images():
                    if (f.filename or '').rsplit('.', 1)[-1].lower() in IMAGE_EXTS]
     if not image_files:
         return jsonify({"error": "No supported image files found"}), 400
-
     ts = int(time.time() * 1000)
     img_dir = os.path.join(CBZ_UPLOAD_DIR, f"imgbundle_{ts}")
     os.makedirs(img_dir, exist_ok=True)
-
     saved = []
     for f in image_files:
         safe_name = re.sub(r'[^\w\s\-.]', '_', os.path.basename(f.filename or f'image_{len(saved)}'))
         dest = os.path.join(img_dir, safe_name)
         f.save(dest)
         saved.append(dest)
-
-    # Sort naturally so page order matches the filenames the user intended
     saved.sort(key=lambda p: cbz_sort_key(os.path.basename(p)))
-
-    # Pack into a temporary CBZ
     cbz_name = f"imgbundle_{ts}.cbz"
     cbz_path = os.path.join(CBZ_UPLOAD_DIR, cbz_name)
     with zipfile.ZipFile(cbz_path, 'w', zipfile.ZIP_STORED) as zf:
         for fp in saved:
             zf.write(fp, os.path.basename(fp))
-
-    # Temp image folder no longer needed
     shutil.rmtree(img_dir, ignore_errors=True)
-
     size = os.path.getsize(cbz_path)
     display_name = f"{len(saved)} images (bundled)"
     return jsonify({
         "path": cbz_path,
         "name": display_name,
         "size": size,
-        "detected_chapter": "",   # user must fill in
+        "detected_chapter": "",
     })
 
 @app.route("/api/cbz/scan", methods=["POST"])
@@ -1569,7 +1698,6 @@ def api_cbz_process():
         return jsonify({"error": "No items to process"}), 400
     if not output_dir:
         return jsonify({"error": "Output folder required"}), 400
-
     output_dir = os.path.expanduser(output_dir)
     session_id = f"cbz_{int(time.time()*1000)}"
     q = queue.Queue()
@@ -1590,11 +1718,11 @@ def api_cbz_stream(session_id):
         while True:
             try:
                 msg = q.get(timeout=30)
-                yield f"data: {json.dumps(msg)}\n\n"
+                yield "data: " + json.dumps(msg) + "\n\n"
                 if msg["type"] == "all_done":
                     break
             except queue.Empty:
-                yield "data: {\"type\": \"ping\"}\n\n"
+                yield 'data: {"type": "ping"}\n\n'
     return Response(generate(), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
@@ -1610,18 +1738,18 @@ if __name__ == "__main__":
     PORT = 5000
     _output_dir = os.path.expanduser("~/Desktop/MangaFactory")
     os.makedirs(_output_dir, exist_ok=True)
-    print(f"\n  ⚙  MangaFactory")
-    print(f"  → Opening http://localhost:{PORT} in your browser...")
-    print(f"  → Press Ctrl+C to quit\n")
+    print("\n  MangaFactory v1.3")
+    print(f"  Opening http://localhost:{PORT} in your browser...")
+    print("  Press Ctrl+C to quit\n")
 
     def _open_browser():
         time.sleep(1.2)
-        webbrowser.open(f"http://localhost:{PORT}")
+        webbrowser.open("http://localhost:" + str(PORT))
 
     threading.Thread(target=_open_browser, daemon=True).start()
 
     import logging
     log = logging.getLogger("werkzeug")
     log.setLevel(logging.ERROR)
-
-    app.run(host="127.0.0.1", port=PORT, debug=False, threaded=True)
+    app.run(host="127.0.0.1", port=PORT, debug=False, use_reloader=False,
+            threaded=True)
