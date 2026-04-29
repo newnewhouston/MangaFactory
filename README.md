@@ -1,4 +1,4 @@
-# MangaFactory v1.2
+# MangaFactory v1.3
 
 **Download · Process · Package**
 
@@ -18,23 +18,24 @@ MangaFactory is a self-contained, single-file Python app that puts a clean brows
 - Optional **CBZ packaging** — after download, chapters are automatically grouped by MangaDex volume and packaged into one `.cbz` file per volume. Once a volume's `.cbz` is written, the raw page images that went into it are removed, so the output folder only contains the packaged volumes. With CBZ packaging off, the raw images are left in place.
 - Real-time progress: live page-by-page and chapter-by-chapter progress bars with a streaming log
 - Already-downloaded pages are skipped automatically on re-runs
-- Output defaults to `~/Downloads/manga`; fully configurable
+- Output defaults to `~/Desktop/MangaFactory` (created automatically on first run)
 
 ### Tab 2 — CBZ Processor
 
-- Point it at any folder of `.cbz` files and click **Scan**
-- Chapter numbers are **auto-detected** from filenames using keyword patterns (`chapter`, `ch`, `c`, `#`) with a fallback to numeric tokens
+- **Three ways to load files — mix and match freely:**
+  - **Drag & drop** — drag `.cbz` files or image files directly onto the drop zone
+  - **Click to browse** — click the drop zone to open a native file picker
+  - **Automatic handoff** — after a download completes, the "Send to CBZ Processor →" button pre-fills the queue from the download output folder without any manual steps
+- **Image bundling** — drop or select raw image files (jpg, png, webp, gif, bmp) instead of a pre-made CBZ; MangaFactory sorts them naturally and packs them into a temporary CBZ automatically, which then appears in the queue like any other file. Useful for scans you already have on disk.
+- Chapter numbers are **auto-detected** from filenames using keyword patterns (`chapter`, `ch`, `c`, `#`) with a fallback to numeric tokens. Image bundles require the chapter number to be set manually.
 - Pages inside each CBZ are renamed to a consistent scheme: `Chapter_XX_page_YYY.ext`
 - A cover image can be injected as `000_cover.{ext}` — always the first file in the archive
+- **Auto-fill** button: set the first chapter number and the rest are filled sequentially
 - Two output modes:
   - **Single CBZ** — everything packed into one `Volume_XX.cbz`
   - **Folder Tree** — pages extracted into a `Volume_XX/` directory (no re-zipping)
-- **Auto-fill** button: set the first chapter number and fill the rest sequentially
 - Real-time progress bars and a per-file status log
-
-### Workflow shortcut
-
-After a download completes, a **"Send to CBZ Processor →"** button pre-fills the processor tab with the output folder and auto-scans it, so you can move straight from downloading to packaging without copying any paths.
+- Output defaults to `~/Desktop/MangaFactory` (created automatically on first run)
 
 ---
 
@@ -64,7 +65,7 @@ Press `Ctrl+C` in the terminal to quit.
 1. Paste a MangaDex URL or series UUID into the input and click **Fetch**
 2. Review the chapter list; check any gap warnings
 3. Select chapters (or click a volume header to select the whole volume)
-4. Choose an output folder (default: `~/Downloads/manga`)
+4. Choose an output folder (default: `~/Desktop/MangaFactory`)
 5. Toggle **Package into CBZ volumes** if you want `.cbz` files per volume
 6. Click **Download Selected** and watch the live progress
 
@@ -72,39 +73,40 @@ Press `Ctrl+C` in the terminal to quit.
 
 ## CBZ Processor Tab — Quick Start
 
-1. Enter the path to a folder containing `.cbz` files and click **Scan**
-2. Verify or correct the auto-detected chapter numbers
+1. Load files using any method (or combine them):
+   - Drag `.cbz` or image files onto the drop zone, or click the zone to browse
+   - After a download, use the **"Send to CBZ Processor →"** button for instant handoff
+2. Verify or correct chapter numbers — image bundles will need a chapter number set manually
 3. Optionally set a volume number and a cover image path
 4. Choose **Single CBZ** or **Folder Tree** output mode
-5. Set an output folder and click **Process Files**
+5. Output folder defaults to `~/Desktop/MangaFactory` — change it if needed
+6. Click **Process Files**
 
 ---
 
 ## Output File Structure
 
-**Downloaded images (no CBZ):**
+**Downloaded images (no CBZ packaging):**
 ```
-~/Downloads/manga/
-  series_slug/
-    series_slug_ch01_001.jpg
-    series_slug_ch01_002.jpg
-    ...
+~/Desktop/MangaFactory/
+  series_slug_ch01_001.jpg
+  series_slug_ch01_002.jpg
+  ...
 ```
 
 **With CBZ packaging enabled:**
 ```
-~/Downloads/manga/
-  series_slug/
-    series_slug_vol01.cbz
-    series_slug_vol02.cbz
-    series_slug_vol_unnumbered.cbz   ← chapters with no volume assigned
+~/Desktop/MangaFactory/
+  series_slug_vol01.cbz
+  series_slug_vol02.cbz
+  series_slug_vol_unnumbered.cbz   ← chapters with no volume assigned
 ```
 
 Raw page images are deleted automatically after each volume's `.cbz` is built, so only the packaged volumes remain. If CBZ packaging is turned off, nothing is deleted — the raw images are left exactly where they were downloaded.
 
 **CBZ Processor output (Single CBZ mode):**
 ```
-output/
+~/Desktop/MangaFactory/
   Volume_03.cbz
     000_cover.jpg
     Chapter_15_page_01.jpg
@@ -115,7 +117,7 @@ output/
 
 **CBZ Processor output (Folder Tree mode):**
 ```
-output/
+~/Desktop/MangaFactory/
   Volume_03/
     000_cover.jpg
     Chapter_15_page_01.jpg
@@ -139,6 +141,7 @@ Downloads use the [MangaDex API](https://api.mangadex.org) with respectful rate-
 - If a chapter has no volume assigned on MangaDex, it is placed in a `vol_unnumbered.cbz` when CBZ packaging is enabled
 - When CBZ packaging is enabled, raw page images are removed after each volume's `.cbz` is successfully written; if the CBZ step fails for a volume, that volume's raw files are kept so you can retry without re-downloading
 - The CBZ Processor uses natural sort order for filenames, so `ch9` correctly comes before `ch10`
+- Dropped or picked files are temporarily stored in `.mdf_uploads/` next to the script; you can safely delete this folder between sessions
 - Dependencies are installed into `.mdf_libs/` next to the script and do not touch your system Python
 
 ---
