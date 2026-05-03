@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MangaFactory — combined MangaDexFactory + CBZ Factory, single-file edition.
+MangaFactory v1.5 — combined MangaDexFactory + CBZ Factory, single-file edition.
 
 Just run:  python MangaFactory.py
 
@@ -9,6 +9,15 @@ Tab 2 — CBZ Processor: Take existing .cbz files, rename pages to
                        Chapter_XX_page_YYY.ext, insert a cover image
                        (000_cover.ext), and repackage as one volume CBZ
                        or a folder tree.
+
+Output layout (new in v1.5):
+    <MangaFactory base>/
+        Downloaded/   ← raw page images land here while a download runs
+        exported/     ← finished .cbz volumes land here after packaging
+
+The base folder is whatever you set as the output folder in the UI
+(default: ~/Desktop/MangaFactory). The Downloaded/ and exported/
+subdirectories are created automatically.
 
 No pip install needed — dependencies are fetched automatically on first
 run into a local folder (.mdf_libs/) next to this script.
@@ -64,6 +73,24 @@ from flask import Flask, request, jsonify, Response
 app = Flask(__name__)
 MANGADEX_API = "https://api.mangadex.org"
 DOWNLOAD_BASE = os.path.expanduser("~/Desktop/MangaFactory")
+
+# v1.5 output layout: raw pages go in <base>/Downloaded/, finished CBZs
+# in <base>/exported/. These names are exposed as constants so the rest
+# of the script (and the README) can refer to a single source of truth.
+DOWNLOAD_SUBDIR = "Downloaded"
+EXPORT_SUBDIR = "exported"
+
+def resolve_io_dirs(base):
+    """Given a user-supplied MangaFactory base folder, return
+    (downloaded_dir, exported_dir). Both are created on disk."""
+    base = os.path.expanduser(base)
+    os.makedirs(base, exist_ok=True)
+    downloaded = os.path.join(base, DOWNLOAD_SUBDIR)
+    exported = os.path.join(base, EXPORT_SUBDIR)
+    os.makedirs(downloaded, exist_ok=True)
+    os.makedirs(exported, exist_ok=True)
+    return downloaded, exported
+
 download_sessions = {}   # MDF download sessions
 cbz_sessions = {}        # CBZ processing sessions
 
@@ -480,6 +507,15 @@ def cbz_process_worker(session_id, items, volume_value, cover_path,
     try:
         output_dir = os.path.expanduser(output_dir)
         os.makedirs(output_dir, exist_ok=True)
+        # v1.5: in single-CBZ mode the finished .cbz is routed into
+        # <output_dir>/exported/. Folder-tree mode is unchanged — its output
+        # is a directory of renamed images, not a CBZ, so the "exported"
+        # rule (which is about CBZ outputs) doesn't apply.
+        if mode == "cbz":
+            cbz_out_root = os.path.join(output_dir, EXPORT_SUBDIR)
+            os.makedirs(cbz_out_root, exist_ok=True)
+        else:
+            cbz_out_root = output_dir
         vol_folder = cbz_volume_folder_name(volume_value)
         vol_fs     = vol_folder.replace(' ', '_')
 
@@ -517,7 +553,7 @@ def cbz_process_worker(session_id, items, volume_value, cover_path,
 
         # Prepare output container
         if mode == "cbz":
-            out_cbz_path = os.path.join(output_dir, f"{vol_fs}.cbz")
+            out_cbz_path = os.path.join(cbz_out_root, f"{vol_fs}.cbz")
             out_zip = zipfile.ZipFile(out_cbz_path, 'w', zipfile.ZIP_STORED)
             q.put({"type": "log", "level": "info",
                    "text": f"Output CBZ: {out_cbz_path}"})
@@ -527,7 +563,7 @@ def cbz_process_worker(session_id, items, volume_value, cover_path,
                        "text": f"+ cover: {cover_entry[0]}"})
         else:
             # folder mode
-            vol_dir = os.path.join(output_dir, vol_fs)
+            vol_dir = os.path.join(cbz_out_root, vol_fs)
             os.makedirs(vol_dir, exist_ok=True)
             out_zip = None
             q.put({"type": "log", "level": "info",
@@ -587,11 +623,11 @@ def cbz_process_worker(session_id, items, volume_value, cover_path,
 
         if mode == "cbz":
             q.put({"type": "all_done",
-                   "output_path": os.path.join(output_dir, f"{vol_fs}.cbz"),
+                   "output_path": os.path.join(cbz_out_root, f"{vol_fs}.cbz"),
                    "mode": mode})
         else:
             q.put({"type": "all_done",
-                   "output_path": os.path.join(output_dir, vol_fs),
+                   "output_path": os.path.join(cbz_out_root, vol_fs),
                    "mode": mode})
     except Exception as e:
         q.put({"type": "fatal", "error": str(e)})
@@ -604,7 +640,7 @@ HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MangaFactory</title>
+<title>MangaFactory v1.5</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
@@ -782,7 +818,7 @@ HTML = r"""<!DOCTYPE html>
       <h1>Manga<span>Factory</span></h1>
       <div style="font-size:12px; color:var(--muted); margin-top:3px;">Download · Process · Package</div>
     </div>
-    <div class="version">v1.3</div>
+    <div class="version">v1.5</div>
   </header>
 
   <div class="tabs">
@@ -1111,9 +1147,19 @@ async function startDownload() {
   const data = await res.json();
   if (data.error) { alert(data.error); return; }
   sessionId = data.session_id;
-  lastDownloadContext = { output_dir: data.output_dir, title: mangaInfo.title };
-  log(`Output: ${data.output_dir}`, 'info');
-  if (makeCbz) log('CBZ packaging enabled — volumes will be built after download.', 'info');
+  lastDownloadContext = {
+    output_dir: data.output_dir,
+    download_dir: data.download_dir,
+    export_dir: data.export_dir,
+    make_cbz: data.make_cbz,
+    title: mangaInfo.title,
+  };
+  log(`Base folder:  ${data.output_dir}`, 'info');
+  log(`Downloaded → ${data.download_dir}`, 'info');
+  if (makeCbz) {
+    log(`Exported → ${data.export_dir}`, 'info');
+    log('CBZ packaging enabled — volumes will be built into exported/ after download.', 'info');
+  }
   eventSource = new EventSource(`/api/stream/${sessionId}`);
   let curChTotal = 0, curChDone = 0;
   eventSource.onmessage = (e) => {
@@ -1152,10 +1198,14 @@ document.getElementById('url-input').addEventListener('keydown', e => { if (e.ke
 /* Send the just-downloaded output folder over to the CBZ processor tab. */
 function sendToCbzProcessor() {
   if (!lastDownloadContext) return;
-  // Pre-fill source folder and switch tabs
-  document.getElementById('cbz-source-input').value = lastDownloadContext.output_dir;
-  const outBase = lastDownloadContext.output_dir.replace(/[\\/]+$/, '');
-  document.getElementById('cbz-output-dir').value = outBase + '/processed';
+  // v1.5 layout: raw images live in <base>/Downloaded/, packaged CBZs in
+  // <base>/exported/. Source the CBZ processor at whichever subfolder the
+  // user just produced. The processor's own output is the *base* folder —
+  // its single-CBZ output will land in <base>/exported/ automatically.
+  const ctx = lastDownloadContext;
+  const source = ctx.make_cbz ? ctx.export_dir : ctx.download_dir;
+  document.getElementById('cbz-source-input').value = source;
+  document.getElementById('cbz-output-dir').value = ctx.output_dir;
   // Switch to CBZ tab
   document.querySelector('.tab[data-tab="cbz"]').click();
   // Auto-scan
@@ -1554,8 +1604,10 @@ def api_download():
     output_dir = body.get("output_dir", DOWNLOAD_BASE)
     make_cbz = body.get("make_cbz", False)
     source = body.get("source", "mangadex")
-    output_dir = os.path.expanduser(output_dir)
-    os.makedirs(output_dir, exist_ok=True)
+    # v1.5: raw pages always go in <base>/Downloaded/, finished CBZs in
+    # <base>/exported/. The user-supplied output_dir is the *base* folder.
+    download_dir, export_dir = resolve_io_dirs(output_dir)
+    base_dir = os.path.expanduser(output_dir)
     series_slug = slugify(manga_title)
     session_id = f"{manga_id}_{int(time.time())}"
     q = queue.Queue()
@@ -1568,7 +1620,7 @@ def api_download():
                 break
             ch_q = queue.Queue()
             t = threading.Thread(target=worker_fn,
-                                 args=(session_id, ch, series_slug, output_dir, ch_q),
+                                 args=(session_id, ch, series_slug, download_dir, ch_q),
                                  daemon=True)
             t.start()
             while True:
@@ -1584,11 +1636,13 @@ def api_download():
             t.join()
             time.sleep(0.5)
         if make_cbz and download_sessions.get(session_id) is not None:
-            build_cbz_worker(session_id, series_slug, completed_chapters, output_dir, q)
+            build_cbz_worker(session_id, series_slug, completed_chapters, export_dir, q)
         else:
             q.put({"type": "all_done"})
     threading.Thread(target=run, daemon=True).start()
-    return jsonify({"session_id": session_id, "output_dir": output_dir})
+    return jsonify({"session_id": session_id, "output_dir": base_dir,
+                    "download_dir": download_dir, "export_dir": export_dir,
+                    "make_cbz": make_cbz})
 
 @app.route("/api/stream/<session_id>")
 def api_stream(session_id):
@@ -1736,9 +1790,13 @@ def api_cbz_cancel(session_id):
 
 if __name__ == "__main__":
     PORT = 5000
-    _output_dir = os.path.expanduser("~/Desktop/MangaFactory")
-    os.makedirs(_output_dir, exist_ok=True)
-    print("\n  MangaFactory v1.3")
+    # Ensure the default base + Downloaded/ + exported/ subdirs exist
+    # so the very first run has a clean folder layout to start from.
+    resolve_io_dirs(DOWNLOAD_BASE)
+    print("\n  MangaFactory v1.5")
+    print(f"  Base folder: {DOWNLOAD_BASE}")
+    print(f"    ├─ {DOWNLOAD_SUBDIR}/   (raw downloads)")
+    print(f"    └─ {EXPORT_SUBDIR}/   (packaged CBZs)")
     print(f"  Opening http://localhost:{PORT} in your browser...")
     print("  Press Ctrl+C to quit\n")
 
