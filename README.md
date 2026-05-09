@@ -1,26 +1,36 @@
-# MangaFactory v1.5
+# MangaFactory v1.6
 
 A single-file Python app with a browser UI for downloading manga and packaging it into CBZ volumes. No pip install, no virtual environment — just run the script.
 
 ```bash
-python "MangaFactory 1.5.py"
+python "MangaFactory 1.6.py"
 ```
 
 Opens `http://localhost:5000` automatically. Press `Ctrl+C` to quit.
 
-## Output layout
+---
 
-v1.5 keeps your output folder tidy by splitting raw downloads from finished CBZs:
+## What's new in v1.6
+
+- **Working state moved into a dedicated `MDF/` folder.** The hidden `.mdf_libs/` (auto-installed dependencies) and `.mdf_uploads/` (CBZ Processor scratch space) no longer sit next to the script. They now live in `~/Desktop/MangaFactory/MDF/`, so moving or copying the `.py` file no longer abandons or duplicates the deps cache, and the script directory stays clean.
+- **CBZ Processor uploads are auto-cleaned after each export.** Once a CBZ Processor job finishes writing to `exported/` (or, in folder-tree mode, to its volume folder), the contents of `.mdf_uploads/` are emptied automatically. No more leftover source files accumulating between jobs.
+
+Everything else from v1.5 — sources, download flow, CBZ packaging, the processor tab — works exactly the same.
+
+---
+
+## Output layout
 
 ```
 ~/Desktop/MangaFactory/        ← base folder (set in the UI)
 ├── Downloaded/                ← raw page images during download
-└── exported/                  ← packaged .cbz volumes
+├── exported/                  ← packaged .cbz volumes
+└── MDF/                       ← MangaFactory's own working state (new in v1.6)
+    ├── .mdf_libs/             ← auto-installed Python dependencies
+    └── .mdf_uploads/          ← CBZ Processor scratch (auto-emptied after export)
 ```
 
-Both subfolders are created automatically. When CBZ packaging is enabled, raw images in `Downloaded/` are deleted after each volume is successfully packaged into `exported/`, just like v1.4 — but the two stages now live in their own folders instead of mixing in the base directory.
-
-The CBZ Processor tab follows the same convention: its single-CBZ output lands in `exported/` under whatever base folder you point it at. (Folder Tree mode keeps writing into the base folder directly, since it produces a directory of images, not a CBZ.)
+All four subfolders are created automatically. When CBZ packaging is enabled in Tab 1, raw images in `Downloaded/` are deleted after each volume is successfully packaged into `exported/`. The CBZ Processor's single-CBZ output lands in `exported/` under whatever base folder you point it at; folder-tree mode writes into the base folder directly since it produces a directory of images, not a CBZ.
 
 ---
 
@@ -90,20 +100,23 @@ Takes existing `.cbz` files (or loose image files) and repackages them with cons
 - **Single CBZ** — all chapters packed into `Volume_XX.cbz`, pages renamed to `Chapter_XX_page_YYY.ext`, cover inserted as `000_cover.ext`
 - **Folder Tree** — same naming, written to a `Volume_XX/` directory instead
 
+**After export** — the contents of `MDF/.mdf_uploads/` are wiped automatically (new in v1.6). The directory itself is kept so the next job can write into it without recreating it. Cleanup is best-effort; if a file happens to be locked by another process, it's skipped silently rather than failing the export.
+
 ---
 
 ## Requirements
 
 - Python 3.8+
-- Internet on first run — `flask`, `requests`, and `cloudscraper` are installed automatically into `.mdf_libs/` next to the script
+- Internet on first run — `flask`, `requests`, and `cloudscraper` are installed automatically into `~/Desktop/MangaFactory/MDF/.mdf_libs/`
 
 ---
 
 ## Notes
 
 - MangaDex fetches English translations only
-- `.mdf_libs/` holds auto-installed dependencies; `.mdf_uploads/` holds temporary upload files. Both can be deleted safely between sessions
+- `MDF/.mdf_libs/` holds auto-installed dependencies; `MDF/.mdf_uploads/` holds temporary upload files (auto-cleared after each successful export). Both can be deleted safely between sessions
 - Dependencies do not touch your system Python installation
+- Upgrading from v1.5: the old `.mdf_libs/` and `.mdf_uploads/` folders next to the script can be deleted — v1.6 will rebuild them in `~/Desktop/MangaFactory/MDF/` on first run
 
 ---
 
