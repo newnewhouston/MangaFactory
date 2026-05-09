@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MangaFactory v1.5 — combined MangaDexFactory + CBZ Factory, single-file edition.
+MangaFactory v1.6 — combined MangaDexFactory + CBZ Factory, single-file edition.
 
 Just run:  python MangaFactory.py
 
@@ -10,17 +10,20 @@ Tab 2 — CBZ Processor: Take existing .cbz files, rename pages to
                        (000_cover.ext), and repackage as one volume CBZ
                        or a folder tree.
 
-Output layout (new in v1.5):
-    <MangaFactory base>/
+Output layout:
+    ~/Desktop/MangaFactory/
         Downloaded/   ← raw page images land here while a download runs
         exported/     ← finished .cbz volumes land here after packaging
+        MDF/          ← MangaFactory's own working state (new in v1.6)
+            .mdf_libs/      ← bundled Python deps (auto-installed)
+            .mdf_uploads/   ← scratch space for the CBZ Processor tab,
+                              auto-emptied after every successful
+                              export (new in v1.6)
 
-The base folder is whatever you set as the output folder in the UI
-(default: ~/Desktop/MangaFactory). The Downloaded/ and exported/
-subdirectories are created automatically.
+The Downloaded/ and exported/ subdirectories are created automatically.
 
 No pip install needed — dependencies are fetched automatically on first
-run into a local folder (.mdf_libs/) next to this script.
+run into ~/Desktop/MangaFactory/MDF/.mdf_libs/.
 """
 
 # ── Step 1: bootstrap dependencies before anything else imports ───────────────
@@ -30,7 +33,14 @@ import os
 import subprocess
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_LIBS = os.path.join(_HERE, ".mdf_libs")
+
+# v1.6: MangaFactory's own working state (bundled deps + CBZ scratch space)
+# now lives in a fixed location on the user's desktop, not next to the
+# script. This keeps the script directory clean and means moving or
+# copying the .py file no longer abandons (or duplicates) the deps cache.
+_MDF_HOME = os.path.join(os.path.expanduser("~/Desktop/MangaFactory"), "MDF")
+os.makedirs(_MDF_HOME, exist_ok=True)
+_LIBS = os.path.join(_MDF_HOME, ".mdf_libs")
 REQUIRED = {"flask": "flask>=3.0", "requests": "requests>=2.31",
             "cloudscraper": "cloudscraper>=1.2"}
 
@@ -95,8 +105,37 @@ download_sessions = {}   # MDF download sessions
 cbz_sessions = {}        # CBZ processing sessions
 
 IMAGE_EXTS = {"jpg", "jpeg", "png", "gif", "webp", "bmp"}
-CBZ_UPLOAD_DIR = os.path.join(_HERE, ".mdf_uploads")
+# v1.6: scratch dir for the CBZ Processor tab now lives under
+# ~/Desktop/MangaFactory/MDF/. Its contents are wiped after every
+# successful export (see _cleanup_uploads below) so leftover pages
+# from one job never pollute the next.
+CBZ_UPLOAD_DIR = os.path.join(_MDF_HOME, ".mdf_uploads")
 _wc_scraper = None
+
+def _cleanup_uploads():
+    """Empty CBZ_UPLOAD_DIR while keeping the directory itself.
+
+    v1.6: invoked after a CBZ export has been written to the
+    `exported/` folder, so the user-supplied source files don't
+    accumulate in MDF/.mdf_uploads/ between runs. Best-effort —
+    swallows per-entry errors (a file can be locked on Windows if
+    something else has it open) so a cleanup hiccup never tanks
+    the export that just succeeded.
+    """
+    if not os.path.isdir(CBZ_UPLOAD_DIR):
+        return
+    try:
+        for name in os.listdir(CBZ_UPLOAD_DIR):
+            path = os.path.join(CBZ_UPLOAD_DIR, name)
+            try:
+                if os.path.isdir(path) and not os.path.islink(path):
+                    shutil.rmtree(path, ignore_errors=True)
+                else:
+                    os.remove(path)
+            except Exception:
+                pass
+    except Exception:
+        pass
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -622,10 +661,20 @@ def cbz_process_worker(session_id, items, volume_value, cover_path,
                 out_zip.close()
 
         if mode == "cbz":
+            # v1.6: a fresh .cbz has just been written into the
+            # `exported/` folder, so the user-uploaded source files in
+            # MDF/.mdf_uploads/ have served their purpose. Wipe them
+            # before signalling all_done so the directory is empty by
+            # the time the UI re-enables for the next job.
+            _cleanup_uploads()
             q.put({"type": "all_done",
                    "output_path": os.path.join(cbz_out_root, f"{vol_fs}.cbz"),
                    "mode": mode})
         else:
+            # Folder-tree mode also consumed the uploads, even though
+            # its output isn't a .cbz in `exported/`. Clean up too so
+            # the behaviour is consistent across both processor modes.
+            _cleanup_uploads()
             q.put({"type": "all_done",
                    "output_path": os.path.join(cbz_out_root, vol_fs),
                    "mode": mode})
@@ -640,7 +689,7 @@ HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MangaFactory v1.5</title>
+<title>MangaFactory v1.6</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
@@ -818,7 +867,7 @@ HTML = r"""<!DOCTYPE html>
       <h1>Manga<span>Factory</span></h1>
       <div style="font-size:12px; color:var(--muted); margin-top:3px;">Download · Process · Package</div>
     </div>
-    <div class="version">v1.5</div>
+    <div class="version">v1.6</div>
   </header>
 
   <div class="tabs">
@@ -1793,10 +1842,11 @@ if __name__ == "__main__":
     # Ensure the default base + Downloaded/ + exported/ subdirs exist
     # so the very first run has a clean folder layout to start from.
     resolve_io_dirs(DOWNLOAD_BASE)
-    print("\n  MangaFactory v1.5")
+    print("\n  MangaFactory v1.6")
     print(f"  Base folder: {DOWNLOAD_BASE}")
     print(f"    ├─ {DOWNLOAD_SUBDIR}/   (raw downloads)")
-    print(f"    └─ {EXPORT_SUBDIR}/   (packaged CBZs)")
+    print(f"    ├─ {EXPORT_SUBDIR}/   (packaged CBZs)")
+    print(f"    └─ MDF/         (working state — uploads cleared after each export)")
     print(f"  Opening http://localhost:{PORT} in your browser...")
     print("  Press Ctrl+C to quit\n")
 
