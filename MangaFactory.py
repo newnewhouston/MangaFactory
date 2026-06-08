@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
 """
-MangaFactory v1.6 — combined MangaDexFactory + CBZ Factory, single-file edition.
+MangaFactory v1.7 — combined MangaDexFactory + CBZ Factory, single-file edition.
 
 Just run:  python MangaFactory.py
 
 Tab 1 — Download:      Grab chapters from MangaDex, optionally package as CBZ.
-Tab 2 — CBZ Processor: Take existing .cbz files, rename pages to
+Tab 2 — CBZ Processor: Take existing .cbz files, loose image files, or a
+                       .zip archive (new in v1.7), rename pages to
                        Chapter_XX_page_YYY.ext, insert a cover image
                        (000_cover.ext), and repackage as one volume CBZ
                        or a folder tree.
+
+                       v1.7 zip handling: a dropped/uploaded .zip is
+                       inspected — if it holds nested .cbz files each is
+                       added to the queue as its own chapter; otherwise the
+                       archive's images are treated as a single CBZ source.
 
 Output layout:
     ~/Desktop/MangaFactory/
@@ -430,7 +436,7 @@ def build_cbz_worker(session_id, series_slug, completed_chapters, output_dir, q)
 
     sorted_vols = sorted(vol_groups.keys(), key=vol_sort_key)
     total_vols = len(sorted_vols)
-    q.put({"type": "cbz_start", "total": total_vols})
+    q.put({"type": "cbz_start", "total": total_vols, "unit": "volume"})
     for i, vol_key in enumerate(sorted_vols):
         if download_sessions.get(session_id) is None:
             break
@@ -467,6 +473,62 @@ def build_cbz_worker(session_id, series_slug, completed_chapters, output_dir, q)
             q.put({"type": "cbz_error", "vol": vol_key, "error": str(e)})
     q.put({"type": "all_done"})
 
+def build_cbz_per_chapter_worker(session_id, series_slug, completed_chapters,
+                                 output_dir, q):
+    """v1.7: package each downloaded chapter into its own standalone .cbz.
+
+    Mirrors build_cbz_worker's event protocol (cbz_start / cbz_building /
+    cbz_done / cbz_error / all_done) but emits one entry per chapter instead
+    of per volume, so the same Download-tab progress UI renders it unchanged.
+    Raw page images are removed after each chapter is packaged.
+    """
+    items = [ch for ch in completed_chapters if ch.get("files")]
+
+    def ch_sort_key(ch):
+        try:
+            return (0, float(ch.get("chapter")))
+        except (TypeError, ValueError):
+            return (1, str(ch.get("chapter") or ""))
+
+    items = sorted(items, key=ch_sort_key)
+    total = len(items)
+    q.put({"type": "cbz_start", "total": total, "unit": "chapter"})
+    for i, ch in enumerate(items):
+        if download_sessions.get(session_id) is None:
+            break
+        files = sorted(ch.get("files", []))
+        if not files:
+            continue
+        ch_raw = ch.get("chapter")
+        numbered = ch_raw not in (None, "")
+        ch_num = format_chapter_num(ch_raw)
+        # key doubles as the progress-row id and label source on the client.
+        key = re.sub(r'[^\w.]', '_', str(ch_raw)) if numbered else f"unnumbered_{i + 1}"
+        cbz_name = (f"{series_slug}_ch{ch_num}.cbz" if numbered
+                    else f"{series_slug}_ch_unnumbered_{i + 1}.cbz")
+        cbz_path = os.path.join(output_dir, cbz_name)
+        q.put({"type": "cbz_building", "vol": key, "cbz": cbz_name,
+               "file_count": len(files)})
+        try:
+            zipped_files = []
+            with zipfile.ZipFile(cbz_path, 'w', zipfile.ZIP_STORED) as zf:
+                for fp in files:
+                    if os.path.exists(fp):
+                        zf.write(fp, os.path.basename(fp))
+                        zipped_files.append(fp)
+            removed = 0
+            for fp in zipped_files:
+                try:
+                    os.remove(fp)
+                    removed += 1
+                except OSError:
+                    pass
+            q.put({"type": "cbz_done", "vol": key, "cbz": cbz_name,
+                   "index": i + 1, "total": total, "raw_removed": removed})
+        except Exception as e:
+            q.put({"type": "cbz_error", "vol": key, "error": str(e)})
+    q.put({"type": "all_done"})
+
 # ── CBZ Processor helpers (ported from CBZ Factory JS) ────────────────────────
 
 def cbz_detect_chapter_number(filename):
@@ -477,7 +539,7 @@ def cbz_detect_chapter_number(filename):
       2) Otherwise fall back to any 1–3 digit number in the filename, which
          avoids accidentally grabbing 4-digit years.
     """
-    name = re.sub(r'\.cbz$', '', filename, flags=re.IGNORECASE)
+    name = re.sub(r'\.(cbz|zip)$', '', filename, flags=re.IGNORECASE)
     # Keyword-anchored patterns first — allow up to 4 digits when prefixed.
     patterns = [
         re.compile(r'(?:chapter|chap|ch|c)[\s._-]*(\d{1,4})', re.IGNORECASE),
@@ -512,6 +574,35 @@ def cbz_list_image_entries(zf):
 def cbz_volume_folder_name(volume_value):
     v = (volume_value or "").strip()
     return f"Volume_{v}" if v else "New Volume"
+
+def cbz_output_base_name(volume_value, items):
+    """Decide the output CBZ/folder name → returns (display, fs_safe).
+
+    Priority:
+      1. If a Volume Number is supplied → 'Volume_{v}' (unchanged behaviour).
+      2. Else, if the queued items carry chapter numbers, name the output
+         after the chapter(s): a single chapter → just that number
+         (e.g. '7' → '7.cbz'); several distinct chapters → 'first-last'.
+      3. Else → the generic 'New Volume' fallback.
+
+    v1.7: rule (2) is new. Previously an empty Volume Number always
+    produced 'New Volume' even when the chapter number was known.
+    """
+    v = (volume_value or "").strip()
+    if v:
+        name = f"Volume_{v}"
+        return name, name.replace(' ', '_')
+    chapters = []
+    for it in (items or []):
+        c = (it.get("chapter") or "").strip()
+        if c and c not in chapters:
+            chapters.append(c)
+    if chapters:
+        chapters.sort(key=cbz_sort_key)
+        base = chapters[0] if len(chapters) == 1 else f"{chapters[0]}-{chapters[-1]}"
+        safe = re.sub(r'[^\w\s.\-]', '_', base).strip().replace(' ', '_')
+        return base, (safe or "New_Volume")
+    return "New Volume", "New_Volume"
 
 def cbz_scan_folder(folder_path):
     """Scan a folder for .cbz files, return list sorted naturally with detected chapter numbers."""
@@ -555,8 +646,7 @@ def cbz_process_worker(session_id, items, volume_value, cover_path,
             os.makedirs(cbz_out_root, exist_ok=True)
         else:
             cbz_out_root = output_dir
-        vol_folder = cbz_volume_folder_name(volume_value)
-        vol_fs     = vol_folder.replace(' ', '_')
+        vol_folder, vol_fs = cbz_output_base_name(volume_value, items)
 
         # Cover preparation
         cover_entry = None
@@ -689,7 +779,7 @@ HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MangaFactory v1.6</title>
+<title>MangaFactory v1.7</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
@@ -867,7 +957,7 @@ HTML = r"""<!DOCTYPE html>
       <h1>Manga<span>Factory</span></h1>
       <div style="font-size:12px; color:var(--muted); margin-top:3px;">Download · Process · Package</div>
     </div>
-    <div class="version">v1.6</div>
+    <div class="version">v1.7</div>
   </header>
 
   <div class="tabs">
@@ -886,6 +976,110 @@ HTML = r"""<!DOCTYPE html>
       </div>
       <div id="loading-spinner"><span class="spinner">◌</span> Fetching chapter list...</div>
     </div>
+
+    <div class="card">
+      <div class="card-title">Comix.to · Browser Grab</div>
+      <div style="font-size:13px; color:var(--text); line-height:1.6; margin-bottom:14px;">
+        comix.to encrypts its API, so MangaFactory can't fetch it server-side. Instead, pages are grabbed
+        straight from your own logged-in browser. Drag the button to your bookmarks bar once, open any
+        comix.to chapter, then click it — it packages every page into a
+        <code style="color:var(--accent)">.cbz</code> and downloads it. Drop that file into the
+        <b>CBZ Processor</b> tab to rename pages and finish the volume.
+      </div>
+      <div style="display:flex; flex-wrap:wrap; gap:8px 16px; font-family:var(--mono); font-size:11px; color:var(--muted); margin-bottom:14px;">
+        <span><b style="color:var(--accent2)">1.</b> Drag → bookmarks bar</span>
+        <span><b style="color:var(--accent2)">2.</b> Open a comix.to chapter</span>
+        <span><b style="color:var(--accent2)">3.</b> Click the bookmark</span>
+        <span><b style="color:var(--accent2)">4.</b> Drop the .cbz into CBZ Processor</span>
+      </div>
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <a id="comix-bm" class="btn" href="#" draggable="true" style="text-decoration:none;">📥 Comix → CBZ</a>
+        <button class="btn btn-ghost btn-sm" id="comix-copy-bm">Copy bookmarklet</button>
+        <button class="btn btn-ghost btn-sm" id="comix-copy-src">Copy console snippet</button>
+        <span class="cbz-sublabel" id="comix-copied" style="color:var(--success);"></span>
+      </div>
+      <div class="cbz-sublabel" style="margin-top:10px;">
+        Can't drag it? Click <b>Copy bookmarklet</b>, create a new bookmark, and paste it as the URL — or
+        <b>Copy console snippet</b> and paste into the chapter page's DevTools console (F12).
+      </div>
+    </div>
+
+    <script type="text/plain" id="comix-src">(async () => {
+  let box = document.getElementById('mf-grab'); if (box) box.remove();
+  box = document.createElement('div'); box.id = 'mf-grab';
+  box.style.cssText = 'position:fixed;top:12px;right:12px;z-index:2147483647;background:#16161c;color:#e8e8f0;font:13px/1.5 ui-monospace,monospace;padding:14px 16px;border:1px solid #e8441a;border-radius:6px;max-width:320px;box-shadow:0 6px 24px rgba(0,0,0,.5)';
+  document.body.appendChild(box);
+  const log = m => { box.innerHTML = '<b style="color:#e8441a">MangaFactory · Comix grab</b><br>' + m; };
+  log('Starting…');
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const readerImg = [...document.querySelectorAll('img')].map(i => i.currentSrc || i.src).find(s => /\/i4\//.test(s));
+  if (!readerImg) { log('No reader pages found.<br>Open a comix.to chapter, then run this again.'); return; }
+  const m = readerImg.match(/^(https?:\/\/[^/]+\/i4\/[^/]+)\/(\d+)\.(\w+)/);
+  if (!m) { log('Could not read the page image pattern.'); return; }
+  const base = m[1], padW = m[2].length, ext = m[3];
+  const url = n => base + '/' + String(n).padStart(padW, '0') + '.' + ext;
+  const dens = {};
+  (document.body.innerText.match(/\b\d{1,4}\s*\/\s*(\d{1,4})\b/g) || []).forEach(s => { const d = s.split('/')[1].trim(); dens[d] = (dens[d] || 0) + 1; });
+  let total = 0, best = 0; for (const d in dens) if (dens[d] > best) { best = dens[d]; total = parseInt(d, 10); }
+  const tryFetch = async n => {
+    for (let t = 0; t < 3; t++) {
+      try {
+        const ac = new AbortController(); const id = setTimeout(() => ac.abort(), 8000);
+        const r = await fetch(url(n), { mode: 'cors', cache: 'force-cache', signal: ac.signal }); clearTimeout(id);
+        if (r.ok) return new Uint8Array(await r.arrayBuffer());
+      } catch (e) {}
+      await sleep(600 * (t + 1));
+    }
+    return null;
+  };
+  const files = []; let n = 0, misses = 0;
+  while (n < 1000) {
+    n++;
+    log('Downloading page ' + n + (total ? ' / ' + total : '') + ' … (' + files.length + ' saved)');
+    const d = await tryFetch(n);
+    if (d) { files.push({ n, d }); misses = 0; }
+    else { misses++; if (misses >= 2 && n >= total) break; }
+    await sleep(350);
+  }
+  if (!files.length) { log('Could not fetch any pages.<br>Make sure a chapter is open, then retry.'); return; }
+  const crcT = (() => { const t = new Uint32Array(256); for (let i = 0; i < 256; i++) { let c = i; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[i] = c >>> 0; } return t; })();
+  const crc32 = u8 => { let c = 0xFFFFFFFF; for (let i = 0; i < u8.length; i++) c = crcT[(c ^ u8[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; };
+  const u16 = v => { const b = new Uint8Array(2); new DataView(b.buffer).setUint16(0, v, true); return b; };
+  const u32 = v => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, v >>> 0, true); return b; };
+  const enc = new TextEncoder(); const chunks = [], central = []; let off = 0;
+  for (const f of files) {
+    const nm = enc.encode(String(f.n).padStart(3, '0') + '.' + ext), crc = crc32(f.d), sz = f.d.length;
+    [u32(0x04034b50), u16(20), u16(0), u16(0), u16(0), u16(0), u32(crc), u32(sz), u32(sz), u16(nm.length), u16(0), nm].forEach(c => chunks.push(c));
+    chunks.push(f.d);
+    central.push([u32(0x02014b50), u16(20), u16(20), u16(0), u16(0), u16(0), u16(0), u32(crc), u32(sz), u32(sz), u16(nm.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(off), nm]);
+    off += 30 + nm.length + sz;
+  }
+  const cdStart = off; const cd = []; let cdLen = 0;
+  for (const c of central) c.forEach(x => { cd.push(x); cdLen += x.length; });
+  const eocd = [u32(0x06054b50), u16(0), u16(0), u16(files.length), u16(files.length), u32(cdLen), u32(cdStart), u16(0)];
+  const all = [...chunks, ...cd, ...eocd]; let tot = 0; all.forEach(c => tot += c.length);
+  const zip = new Uint8Array(tot); let q = 0; all.forEach(c => { zip.set(c, q); q += c.length; });
+  const title = (document.title || 'comix').replace(/\s*·.*$/, '').trim() || 'comix';
+  let ch = ''; const cm = document.title.match(/ch\.?\s*([\d.]+)/i) || location.pathname.match(/chapter-([\d.]+)/i); if (cm) ch = cm[1];
+  const safe = s => s.replace(/[\\/:*?"<>|]+/g, '').replace(/\s+/g, ' ').trim();
+  const fname = (safe(title) || 'comix') + (ch ? ' - Ch ' + ch : '') + '.cbz';
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([zip], { type: 'application/zip' }));
+  a.download = fname; document.body.appendChild(a); a.click(); a.remove();
+  log('✓ Saved <b>' + fname + '</b><br>' + files.length + ' pages.<br>Now drop it into MangaFactory → CBZ Processor.');
+  setTimeout(() => box.remove(), 15000);
+})();</script>
+    <script>
+    (function () {
+      var src = document.getElementById('comix-src').textContent;
+      var bm = 'javascript:' + encodeURIComponent(src);
+      var link = document.getElementById('comix-bm');
+      link.href = bm;
+      link.addEventListener('click', function (e) { e.preventDefault(); });
+      function flash(t) { var el = document.getElementById('comix-copied'); el.textContent = t; setTimeout(function () { el.textContent = ''; }, 2500); }
+      document.getElementById('comix-copy-bm').addEventListener('click', function () { navigator.clipboard.writeText(bm).then(function () { flash('✓ Bookmarklet copied'); }); });
+      document.getElementById('comix-copy-src').addEventListener('click', function () { navigator.clipboard.writeText(src).then(function () { flash('✓ Snippet copied'); }); });
+    })();
+    </script>
 
     <div id="manga-info">
       <div>
@@ -920,15 +1114,14 @@ HTML = r"""<!DOCTYPE html>
           <div class="outdir-label">Output Folder:</div>
           <input type="text" id="output-dir" style="flex:1; font-size:12px;" value="~/Desktop/MangaFactory" />
         </div>
-        <div class="cbz-toggle-row">
-          <label class="toggle-wrap">
-            <input type="checkbox" id="cbz-toggle">
-            <span class="toggle-slider"></span>
-          </label>
-          <div>
-            <div class="cbz-label">Package into CBZ volumes</div>
-            <div class="cbz-sublabel" id="cbz-sublabel">Groups chapters by volume → creates one .cbz per volume (raw images are removed after each volume is packaged)</div>
+        <div class="cbz-toggle-row" style="flex-direction:column; align-items:stretch; gap:8px;">
+          <div class="cbz-label">Packaging</div>
+          <div class="cbz-mode-row">
+            <button class="cbz-mode-btn active" id="dl-mode-images" onclick="dlSetMode('images')">🖼 Images</button>
+            <button class="cbz-mode-btn" id="dl-mode-volume" onclick="dlSetMode('volume')">📚 One CBZ / Volume</button>
+            <button class="cbz-mode-btn" id="dl-mode-chapter" onclick="dlSetMode('chapter')">📦 One CBZ / Chapter</button>
           </div>
+          <div class="cbz-sublabel" id="cbz-sublabel">Saves raw page images into Downloaded/ — no packaging.</div>
         </div>
         <button class="btn btn-success" id="dl-btn" onclick="startDownload()">Download Selected</button>
       </div>
@@ -975,9 +1168,9 @@ HTML = r"""<!DOCTYPE html>
       <div class="drop-zone" id="cbz-drop-zone" style="cursor:pointer">
         <div class="drop-zone-icon">📂</div>
         <div class="drop-zone-label">Drop files here or click to browse</div>
-        <div class="drop-zone-hint">.cbz files — or image files (jpg, png, webp…) to bundle into a new CBZ</div>
+        <div class="drop-zone-hint">.cbz files · a .zip archive · or image files (jpg, png, webp…) to bundle into a new CBZ</div>
       </div>
-      <input type="file" id="cbz-file-picker" accept=".cbz,.jpg,.jpeg,.png,.gif,.webp,.bmp" multiple style="display:none" />
+      <input type="file" id="cbz-file-picker" accept=".cbz,.zip,.jpg,.jpeg,.png,.gif,.webp,.bmp" multiple style="display:none" />
       <div class="upload-status" id="cbz-upload-status"></div>
     </div>
 
@@ -1097,10 +1290,7 @@ async function fetchSeries() {
     const volPart = allVolumes.length ? ` · ${allVolumes.length} volumes` : '';
     const pgPart = allChapters.reduce((s,c)=>s+c.pages,0);
     document.getElementById('manga-meta').textContent = `${allChapters.length} chapters${volPart}${pgPart ? ' · ' + pgPart + ' total pages' : ''}${srcBadge}`;
-    const sublabel = document.getElementById('cbz-sublabel');
-    if (sublabel) sublabel.textContent = currentSource === 'weebcentral'
-      ? 'Packages all selected chapters into one .cbz (raw images are removed after packaging)'
-      : 'Groups chapters by volume → creates one .cbz per volume (raw images are removed after each volume is packaged)';
+    dlSetMode(dlCbzMode);  // refresh the packaging sublabel for the current mode
     document.getElementById('manga-info').style.display = 'flex';
     if (data.gaps && data.gaps.length > 0) {
       document.getElementById('gap-text').textContent = `Gaps found between: ${data.gaps.map(g=>`Ch.${g.from} → Ch.${g.to}`).join(', ')}. These chapters may not be translated yet.`;
@@ -1178,11 +1368,25 @@ function selectNone() { document.querySelectorAll('.ch-checkbox').forEach(cb => 
 function updateCount() { document.getElementById('selection-count').textContent = `${document.querySelectorAll('.ch-checkbox:checked').length} selected`; }
 function getSelectedChapters() { const ids = [...document.querySelectorAll('.ch-checkbox:checked')].map(cb => cb.dataset.id); return allChapters.filter(ch => ids.includes(ch.id)); }
 
+let dlCbzMode = 'images';
+function dlSetMode(mode) {
+  dlCbzMode = mode;
+  document.getElementById('dl-mode-images').classList.toggle('active', mode === 'images');
+  document.getElementById('dl-mode-volume').classList.toggle('active', mode === 'volume');
+  document.getElementById('dl-mode-chapter').classList.toggle('active', mode === 'chapter');
+  const sub = document.getElementById('cbz-sublabel');
+  if (sub) sub.textContent =
+    mode === 'images' ? 'Saves raw page images into Downloaded/ — no packaging.' :
+    mode === 'volume' ? 'Groups selected chapters by volume → one .cbz per volume in exported/ (raw images removed after). Sources without volume info yield a single combined .cbz.' :
+    'Packages each selected chapter into its own standalone .cbz in exported/ (raw images removed after each chapter).';
+}
+
 async function startDownload() {
   const selected = getSelectedChapters();
   if (!selected.length) { alert('Select at least one chapter.'); return; }
   const outputDir = document.getElementById('output-dir').value.trim();
-  const makeCbz = document.getElementById('cbz-toggle').checked;
+  const mode = dlCbzMode;
+  const makeCbz = mode !== 'images';
   document.getElementById('dl-btn').disabled = true;
   document.getElementById('progress-section').style.display = 'block';
   document.getElementById('done-banner').style.display = 'none';
@@ -1192,7 +1396,7 @@ async function startDownload() {
   document.getElementById('cbz-vol-list').innerHTML = '';
   totalChs = selected.length; doneChs = 0;
   updateChProgress(0, totalChs); updatePageProgress(0, 0);
-  const res = await fetch('/api/download', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ manga_id: mangaInfo.id, manga_title: mangaInfo.title, chapter_ids: selected, output_dir: outputDir, make_cbz: makeCbz, source: currentSource }) });
+  const res = await fetch('/api/download', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ manga_id: mangaInfo.id, manga_title: mangaInfo.title, chapter_ids: selected, output_dir: outputDir, make_cbz: makeCbz, cbz_mode: mode, source: currentSource }) });
   const data = await res.json();
   if (data.error) { alert(data.error); return; }
   sessionId = data.session_id;
@@ -1207,10 +1411,11 @@ async function startDownload() {
   log(`Downloaded → ${data.download_dir}`, 'info');
   if (makeCbz) {
     log(`Exported → ${data.export_dir}`, 'info');
-    log('CBZ packaging enabled — volumes will be built into exported/ after download.', 'info');
+    log(`CBZ packaging enabled (one per ${mode}) — files build into exported/ after download.`, 'info');
   }
   eventSource = new EventSource(`/api/stream/${sessionId}`);
-  let curChTotal = 0, curChDone = 0;
+  let curChTotal = 0, curChDone = 0, cbzUnit = 'volume';
+  const cbzLabel = (vol) => ('' + vol).indexOf('unnumbered') === 0 ? 'Unnumbered' : (cbzUnit === 'chapter' ? 'Ch. ' : 'Vol. ') + vol;
   eventSource.onmessage = (e) => {
     const msg = JSON.parse(e.data);
     if (msg.type === 'ping') return;
@@ -1219,15 +1424,15 @@ async function startDownload() {
     if (msg.type === 'page_error') { log(`  ✗  page ${msg.page}: ${msg.error}`, 'err'); }
     if (msg.type === 'chapter_done') { doneChs++; updateChProgress(doneChs, totalChs); const s = document.getElementById(`status-${getChIdByNum(msg.chapter)}`); if (s) s.className = 'ch-status done'; }
     if (msg.type === 'chapter_error') { log(`  ✗  Chapter ${msg.chapter} failed: ${msg.error}`, 'err'); doneChs++; updateChProgress(doneChs, totalChs); }
-    if (msg.type === 'cbz_start') { document.getElementById('cbz-progress-section').style.display = 'block'; document.getElementById('current-chapter-info').textContent = `Building ${msg.total} CBZ volume${msg.total > 1 ? 's' : ''}...`; log(`─── Packaging ${msg.total} CBZ volume(s) ───`, 'info'); }
-    if (msg.type === 'cbz_building') { const vl = msg.vol === 'unnumbered' ? 'Unnumbered' : `Vol. ${msg.vol}`; addCbzRow(msg.vol, `building-${msg.vol}`, '⧗', 'building', `${vl} → ${msg.cbz} (${msg.file_count} files)`); }
-    if (msg.type === 'cbz_done') { const vl = msg.vol === 'unnumbered' ? 'Unnumbered' : `Vol. ${msg.vol}`; const cleanup = msg.raw_removed ? ` (cleaned up ${msg.raw_removed} raw file${msg.raw_removed === 1 ? '' : 's'})` : ''; updateCbzRow(`building-${msg.vol}`, '✓', 'done', `${vl} → ${msg.cbz}${cleanup}`); log(`  ✓  ${msg.cbz}${cleanup}`, 'ok'); }
-    if (msg.type === 'cbz_error') { updateCbzRow(`building-${msg.vol}`, '✗', 'err', `Vol. ${msg.vol} failed: ${msg.error}`); log(`  ✗  CBZ Vol. ${msg.vol}: ${msg.error}`, 'err'); }
+    if (msg.type === 'cbz_start') { cbzUnit = msg.unit || 'volume'; document.getElementById('cbz-progress-section').style.display = 'block'; document.getElementById('current-chapter-info').textContent = `Building ${msg.total} CBZ ${cbzUnit}${msg.total > 1 ? 's' : ''}...`; log(`─── Packaging ${msg.total} CBZ ${cbzUnit}(s) ───`, 'info'); }
+    if (msg.type === 'cbz_building') { addCbzRow(msg.vol, `building-${msg.vol}`, '⧗', 'building', `${cbzLabel(msg.vol)} → ${msg.cbz} (${msg.file_count} files)`); }
+    if (msg.type === 'cbz_done') { const cleanup = msg.raw_removed ? ` (cleaned up ${msg.raw_removed} raw file${msg.raw_removed === 1 ? '' : 's'})` : ''; updateCbzRow(`building-${msg.vol}`, '✓', 'done', `${cbzLabel(msg.vol)} → ${msg.cbz}${cleanup}`); log(`  ✓  ${msg.cbz}${cleanup}`, 'ok'); }
+    if (msg.type === 'cbz_error') { updateCbzRow(`building-${msg.vol}`, '✗', 'err', `${cbzLabel(msg.vol)} failed: ${msg.error}`); log(`  ✗  ${cbzLabel(msg.vol)}: ${msg.error}`, 'err'); }
     if (msg.type === 'all_done') {
       eventSource.close();
-      const cbzOn = document.getElementById('cbz-toggle').checked;
+      const cbzOn = dlCbzMode !== 'images';
       document.getElementById('done-banner').style.display = 'block';
-      document.getElementById('done-banner').textContent = cbzOn ? '✓ All chapters downloaded and CBZ volumes packaged.' : '✓ All chapters downloaded successfully.';
+      document.getElementById('done-banner').textContent = cbzOn ? `✓ All chapters downloaded and packaged (one CBZ per ${dlCbzMode}).` : '✓ All chapters downloaded successfully.';
       document.getElementById('current-chapter-info').textContent = 'Complete!';
       document.getElementById('cancel-btn').textContent = 'Done';
       document.getElementById('send-to-cbz-btn').style.display = 'inline-block';
@@ -1330,11 +1535,13 @@ function cbzRenderRow(item) {
     const b = document.getElementById(`cbz-badge-${item.id}`);
     b.textContent = auto ? 'AUTO' : 'MANUAL';
     b.className = `cbz-badge ${auto ? 'auto' : 'manual'}`;
+    cbzUpdateVolumePreview();
   });
   el.querySelector('.cbz-file-remove').addEventListener('click', () => {
     cbzQueue = cbzQueue.filter(q => q.id !== item.id);
     el.remove();
     document.getElementById('cbz-file-count').textContent = `${cbzQueue.length} file${cbzQueue.length !== 1 ? 's' : ''}`;
+    cbzUpdateVolumePreview();
   });
   return el;
 }
@@ -1359,18 +1566,31 @@ function cbzAutofill() {
     if (input) input.value = newVal;
     if (badge) { badge.textContent = 'AUTO-FILL'; badge.className = 'cbz-badge manual'; }
   });
+  cbzUpdateVolumePreview();
 }
 
 function cbzClearFiles() {
   cbzQueue = [];
   cbzRenderFiles();
   document.getElementById('cbz-file-section').style.display = 'none';
+  cbzUpdateVolumePreview();
 }
 
-document.getElementById('cbz-volume-input').addEventListener('input', e => {
-  const v = e.target.value.trim();
-  document.getElementById('cbz-volume-preview').textContent = v ? `Volume_${v}` : 'New Volume';
-});
+// v1.7: when the Volume Number is blank, the output is named after the
+// chapter number(s) in the queue instead of the generic "New Volume".
+// Mirrors cbz_output_base_name() on the server.
+function cbzComputeOutputName() {
+  const v = document.getElementById('cbz-volume-input').value.trim();
+  if (v) return `Volume_${v}`;
+  const chapters = [...new Set(cbzQueue.map(it => (it.chapter || '').trim()).filter(Boolean))];
+  if (!chapters.length) return 'New Volume';
+  chapters.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  return chapters.length === 1 ? chapters[0] : `${chapters[0]}-${chapters[chapters.length - 1]}`;
+}
+function cbzUpdateVolumePreview() {
+  document.getElementById('cbz-volume-preview').textContent = cbzComputeOutputName();
+}
+document.getElementById('cbz-volume-input').addEventListener('input', cbzUpdateVolumePreview);
 
 function cbzSetMode(mode) {
   cbzMode = mode;
@@ -1502,6 +1722,7 @@ async function cbzCancel() {
   const IMAGE_EXTS_JS = new Set(['jpg','jpeg','png','gif','webp','bmp']);
   function isImage(name) { return IMAGE_EXTS_JS.has(name.split('.').pop().toLowerCase()); }
   function isCbz(name)   { return name.toLowerCase().endsWith('.cbz'); }
+  function isZip(name)   { return name.toLowerCase().endsWith('.zip'); }
 
   // Click → open file picker
   zone.addEventListener('click', () => picker.click());
@@ -1530,16 +1751,18 @@ async function cbzCancel() {
 
   function routeFiles(all) {
     const cbzFiles   = all.filter(f => isCbz(f.name));
+    const zipFiles   = all.filter(f => isZip(f.name));
     const imageFiles = all.filter(f => isImage(f.name));
-    const unknown    = all.length - cbzFiles.length - imageFiles.length;
-    if (!cbzFiles.length && !imageFiles.length) {
-      statusEl.textContent = 'No supported files detected (.cbz or image files).';
+    const unknown    = all.length - cbzFiles.length - zipFiles.length - imageFiles.length;
+    if (!cbzFiles.length && !zipFiles.length && !imageFiles.length) {
+      statusEl.textContent = 'No supported files detected (.cbz, .zip, or image files).';
       return;
     }
     if (unknown > 0) {
       statusEl.textContent = `Skipping ${unknown} unsupported file(s)...`;
     }
     if (cbzFiles.length)   cbzHandleCbzFiles(cbzFiles);
+    if (zipFiles.length)   cbzHandleZipFiles(zipFiles);
     if (imageFiles.length) cbzHandleImageFiles(imageFiles);
   }
 
@@ -1562,6 +1785,32 @@ async function cbzCancel() {
     }
     statusEl.textContent = `✓ Added ${added} of ${files.length} CBZ file(s).`;
     setTimeout(() => { statusEl.textContent = ''; }, 3000);
+  }
+
+  async function cbzHandleZipFiles(files) {
+    // v1.7: a .zip is sent to the server, which either splits out nested
+    // .cbz files (one queue item each) or treats the whole archive as a
+    // single CBZ source. Either way the response is {items: [...]}.
+    let added = 0;
+    for (const file of files) {
+      statusEl.textContent = `Uploading ${file.name}...`;
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        const res = await fetch('/api/cbz/upload-zip', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (data.error) { statusEl.textContent = `✗ ${file.name}: ${data.error}`; continue; }
+        const items = data.items || [];
+        items.forEach(cbzAddToQueue);
+        added += items.length;
+      } catch (err) {
+        statusEl.textContent = `✗ Failed to upload ${file.name}: ${err.message}`;
+      }
+    }
+    if (added) {
+      statusEl.textContent = `✓ Added ${added} item(s) from ${files.length} zip(s).`;
+      setTimeout(() => { statusEl.textContent = ''; }, 3000);
+    }
   }
 
   async function cbzHandleImageFiles(files) {
@@ -1587,6 +1836,7 @@ async function cbzCancel() {
     document.getElementById('cbz-file-list').appendChild(cbzRenderRow(item));
     document.getElementById('cbz-file-count').textContent =
       `${cbzQueue.length} file${cbzQueue.length !== 1 ? 's' : ''}`;
+    cbzUpdateVolumePreview();
   }
 })();
 </script>
@@ -1651,7 +1901,13 @@ def api_download():
     manga_title = body.get("manga_title", "unknown")
     chapter_ids = body.get("chapter_ids", [])
     output_dir = body.get("output_dir", DOWNLOAD_BASE)
-    make_cbz = body.get("make_cbz", False)
+    # v1.7: packaging mode — "images" (no CBZ), "volume" (one CBZ per volume,
+    # the original behaviour) or "chapter" (one standalone CBZ per chapter).
+    # Fall back to the legacy make_cbz boolean for older callers.
+    cbz_mode = body.get("cbz_mode")
+    if cbz_mode not in ("images", "volume", "chapter"):
+        cbz_mode = "volume" if body.get("make_cbz", False) else "images"
+    make_cbz = cbz_mode != "images"
     source = body.get("source", "mangadex")
     # v1.5: raw pages always go in <base>/Downloaded/, finished CBZs in
     # <base>/exported/. The user-supplied output_dir is the *base* folder.
@@ -1684,14 +1940,17 @@ def api_download():
                     break
             t.join()
             time.sleep(0.5)
-        if make_cbz and download_sessions.get(session_id) is not None:
+        alive = download_sessions.get(session_id) is not None
+        if alive and cbz_mode == "volume":
             build_cbz_worker(session_id, series_slug, completed_chapters, export_dir, q)
+        elif alive and cbz_mode == "chapter":
+            build_cbz_per_chapter_worker(session_id, series_slug, completed_chapters, export_dir, q)
         else:
             q.put({"type": "all_done"})
     threading.Thread(target=run, daemon=True).start()
     return jsonify({"session_id": session_id, "output_dir": base_dir,
                     "download_dir": download_dir, "export_dir": export_dir,
-                    "make_cbz": make_cbz})
+                    "make_cbz": make_cbz, "cbz_mode": cbz_mode})
 
 @app.route("/api/stream/<session_id>")
 def api_stream(session_id):
@@ -1775,6 +2034,97 @@ def api_cbz_upload_images():
         "detected_chapter": "",
     })
 
+@app.route("/api/cbz/upload-zip", methods=["POST"])
+def api_cbz_upload_zip():
+    """v1.7: accept a generic .zip in the CBZ Processor.
+
+    A .zip is handled one of two ways depending on what's inside:
+      • If it contains one or more nested .cbz files, each is extracted
+        into MDF/.mdf_uploads/ and returned as its own queue item — a
+        "bundle" zip becomes several chapters.
+      • Otherwise, if it contains image files (optionally nested in
+        sub-folders), the archive itself is kept as a single CBZ source;
+        cbz_process_worker reads and renames its pages exactly like it
+        does for a real .cbz.
+
+    Response shape is always {"items": [ {path,name,size,detected_chapter}, … ]}.
+    """
+    if 'file' not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+    f = request.files['file']
+    orig_name = f.filename or ""
+    if not orig_name.lower().endswith('.zip'):
+        return jsonify({"error": "Only .zip files are accepted"}), 400
+    os.makedirs(CBZ_UPLOAD_DIR, exist_ok=True)
+
+    ts = int(time.time() * 1000)
+    tmp_zip = os.path.join(CBZ_UPLOAD_DIR, f"_ziptmp_{ts}.zip")
+    f.save(tmp_zip)
+
+    def _drop_tmp():
+        try:
+            os.remove(tmp_zip)
+        except OSError:
+            pass
+
+    items = []
+    try:
+        with zipfile.ZipFile(tmp_zip, 'r') as zf:
+            members = [i.filename for i in zf.infolist() if not i.is_dir()]
+            cbz_members = [n for n in members if n.lower().endswith('.cbz')]
+            image_members = [n for n in members
+                             if '.' in n
+                             and n.rsplit('.', 1)[-1].lower() in IMAGE_EXTS]
+
+            if cbz_members:
+                # Bundle zip → split each nested .cbz into its own upload.
+                for member in cbz_members:
+                    base = os.path.basename(member)
+                    safe_name = re.sub(r'[^\w\s\-.]', '_', base)
+                    dest_path = os.path.join(CBZ_UPLOAD_DIR, safe_name)
+                    if os.path.exists(dest_path):
+                        b, ext = os.path.splitext(safe_name)
+                        dest_path = os.path.join(
+                            CBZ_UPLOAD_DIR,
+                            f"{b}_{int(time.time() * 1000)}{ext}")
+                    with zf.open(member) as src, open(dest_path, 'wb') as out:
+                        shutil.copyfileobj(src, out)
+                    items.append({
+                        "path": dest_path,
+                        "name": base,
+                        "size": os.path.getsize(dest_path),
+                        "detected_chapter": cbz_detect_chapter_number(base),
+                    })
+            elif not image_members:
+                raise ValueError("Zip contains no .cbz or image files")
+    except zipfile.BadZipFile:
+        _drop_tmp()
+        return jsonify({"error": "Not a valid .zip file"}), 400
+    except ValueError as e:
+        _drop_tmp()
+        return jsonify({"error": str(e)}), 400
+
+    if items:
+        # Nested .cbz files were extracted; the wrapper zip is done with.
+        _drop_tmp()
+        return jsonify({"items": items})
+
+    # Image zip → keep the archive itself as one CBZ source (rename to .cbz
+    # so downstream display and cleanup behave like every other queue item).
+    safe_cbz = os.path.splitext(re.sub(r'[^\w\s\-.]', '_',
+                                       os.path.basename(orig_name)))[0] + '.cbz'
+    dest_path = os.path.join(CBZ_UPLOAD_DIR, safe_cbz)
+    if os.path.exists(dest_path):
+        b, ext = os.path.splitext(safe_cbz)
+        dest_path = os.path.join(CBZ_UPLOAD_DIR, f"{b}_{ts}{ext}")
+    shutil.move(tmp_zip, dest_path)
+    return jsonify({"items": [{
+        "path": dest_path,
+        "name": orig_name,
+        "size": os.path.getsize(dest_path),
+        "detected_chapter": cbz_detect_chapter_number(orig_name),
+    }]})
+
 @app.route("/api/cbz/scan", methods=["POST"])
 def api_cbz_scan():
     body = request.json or {}
@@ -1842,7 +2192,7 @@ if __name__ == "__main__":
     # Ensure the default base + Downloaded/ + exported/ subdirs exist
     # so the very first run has a clean folder layout to start from.
     resolve_io_dirs(DOWNLOAD_BASE)
-    print("\n  MangaFactory v1.6")
+    print("\n  MangaFactory v1.7")
     print(f"  Base folder: {DOWNLOAD_BASE}")
     print(f"    ├─ {DOWNLOAD_SUBDIR}/   (raw downloads)")
     print(f"    ├─ {EXPORT_SUBDIR}/   (packaged CBZs)")
