@@ -1,23 +1,28 @@
-# MangaFactory v1.7
+# MangaFactory v1.8
 
 A single-file Python app with a browser UI for downloading manga and packaging it into CBZ files. No pip install, no virtual environment — just run the script.
 
 ```bash
-python "MangaFactory 1.7.py"
+python "MangaFactory 1.8.py"
 ```
 
 Opens `http://localhost:5000` automatically. Press `Ctrl+C` to quit.
 
 ---
 
-## What's new in v1.7
+## What's new in v1.8
 
-- **Download: per-chapter CBZ packaging.** The Download tab's CBZ toggle is now a three-way **Packaging** selector — **Images** (raw pages, no packaging), **One CBZ / Volume** (the previous grouping behavior), or **One CBZ / Chapter** (new — each selected chapter becomes its own standalone `.cbz`).
-- **CBZ Processor: `.zip` upload.** Alongside `.cbz` files and loose images, you can now drop or browse a `.zip` archive. A zip of images is treated as a single chapter's pages; a zip that bundles several `.cbz` files is split so each nested chapter is queued on its own.
-- **CBZ Processor: chapter-based output naming.** When the **Volume Number** field is left blank but the queued files carry chapter numbers, the output is named after the chapter instead of the generic `New Volume` — a single chapter → `7.cbz`, several chapters → a `7-9` range.
-- **comix.to support (browser grab).** comix.to encrypts its API, so it can't be scraped server-side. A new panel in the Download tab provides a bookmarklet that grabs an open chapter straight from your logged-in browser and saves it as a `.cbz` for the CBZ Processor.
+Visual refresh only — no functional changes.
 
-Everything else from v1.6 — sources, the download flow, the processor tab, and the `MDF/` working-state layout — works the same.
+- **New font.** Switched from Syne to Space Grotesk.
+- **Darker palette.** Background and surface colors are deeper; accent orange is slightly punchier (`#ff5a2e`). Added `--border-hi` and `--accent-soft` tokens for subtler UI states.
+- **Background treatment.** Replaced the grid-line pattern with soft radial gradient blobs.
+- **Logo.** Emoji ⚙️ replaced with a rounded-rectangle "MF" badge with a gradient fill and drop shadow.
+- **Tabs.** Underline-style navigation replaced with a pill-shaped segmented control. Active tab uses a gradient fill.
+- **Version badge.** Now rendered as a pill with a border rather than plain text.
+- **No emoji in labels.** Button labels and mode selectors (Images, One CBZ / Volume, One CBZ / Chapter, etc.) now use plain text instead of emoji prefixes.
+
+Everything from v1.7 — all sources, the download flow, the processor tab, and the `MDF/` layout — works exactly the same.
 
 ---
 
@@ -63,9 +68,9 @@ Progress streams live — page-by-page and chapter-by-chapter bars, plus a scrol
 
 | Mode | Result |
 |---|---|
-| **🖼 Images** | Raw page images only, left in `Downloaded/`. No `.cbz` is built. |
-| **📚 One CBZ / Volume** | Chapters grouped by volume → one `.cbz` per volume in `exported/`. Sources without volume info (WeebCentral, comix) produce a single combined `.cbz`. |
-| **📦 One CBZ / Chapter** | *(new)* Each selected chapter packaged into its own standalone `.cbz` in `exported/`. |
+| **Images** | Raw page images only, left in `Downloaded/`. No `.cbz` is built. |
+| **One CBZ / Volume** | Chapters grouped by volume → one `.cbz` per volume in `exported/`. Sources without volume info (WeebCentral, comix) produce a single combined `.cbz`. |
+| **One CBZ / Chapter** | Each selected chapter packaged into its own standalone `.cbz` in `exported/`. |
 
 In both CBZ modes, raw page images are deleted from `Downloaded/` after each `.cbz` is successfully written.
 
@@ -97,7 +102,7 @@ Downloaded/
 
 comix.to encrypts its API, so MangaFactory can't fetch it server-side. Instead, the **Comix.to · Browser Grab** panel in the Download tab provides a bookmarklet that pulls a chapter straight from your own logged-in browser, where the pages are already decrypted.
 
-1. In MangaFactory, drag the **📥 Comix → CBZ** button to your browser's bookmarks bar (one-time setup). If you can't drag it, use **Copy bookmarklet** and paste it as a new bookmark's URL, or **Copy console snippet** to paste into the page's DevTools console.
+1. In MangaFactory, drag the **Comix → CBZ** button to your browser's bookmarks bar (one-time setup). If you can't drag it, use **Copy bookmarklet** and paste it as a new bookmark's URL, or **Copy console snippet** to paste into the page's DevTools console.
 2. Open any comix.to chapter in your browser.
 3. Click the bookmark. A small overlay reads the page-image pattern and downloads each page one at a time (gently paced to avoid the site's rate limiting), then saves a `{Series} - Ch {n}.cbz`.
 4. Drop that file into **Tab 2 — CBZ Processor** to rename the pages and finish the volume.
@@ -115,13 +120,13 @@ Takes existing `.cbz` files, a `.zip` archive, or loose image files and repackag
 - Click the drop zone to browse
 - After a download, click **Send to CBZ Processor →** to hand off the output folder automatically
 
-**`.zip` archives** *(new in v1.7)* — a dropped or uploaded `.zip` is inspected: if it contains image files (even nested in sub-folders) it's treated as one chapter's pages; if it bundles several `.cbz` files, each nested chapter is split out and queued separately.
+**`.zip` archives** — a dropped or uploaded `.zip` is inspected: if it contains image files (even nested in sub-folders) it's treated as one chapter's pages; if it bundles several `.cbz` files, each nested chapter is split out and queued separately.
 
 **Image files** — raw jpg/png/webp/gif/bmp files are bundled into a temporary `.cbz` automatically (sorted naturally) and added to the queue like any other file.
 
 **Chapter numbers** — auto-detected from filenames via keyword patterns (`chapter`, `ch`, `c`, `#`). Image bundles require a chapter number to be entered manually. Use **Auto-fill** to number a sequence from a starting value.
 
-**Volume & output name** — the output is normally named `Volume_XX` from the **Volume Number** field. *(New in v1.7)* if you leave Volume Number blank but the queued files have chapter numbers, the output is named after the chapter instead: a single chapter → `7.cbz`, several chapters → a `7-9` range. The "Folder/CBZ named:" preview updates live as you edit chapters.
+**Volume & output name** — the output is normally named `Volume_XX` from the **Volume Number** field. If you leave Volume Number blank but the queued files have chapter numbers, the output is named after the chapter instead: a single chapter → `7.cbz`, several chapters → a `7-9` range. The "Folder/CBZ named:" preview updates live as you edit chapters.
 
 **Output**:
 - **Single CBZ** — all chapters packed into one file, pages renamed to `Chapter_XX_page_YYY.ext`, cover inserted as `000_cover.ext`
