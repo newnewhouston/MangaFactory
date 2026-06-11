@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
-MangaFactory v1.7 — combined MangaDexFactory + CBZ Factory, single-file edition.
+MangaFactory v1.8 — combined MangaDexFactory + CBZ Factory, single-file edition.
+
+v1.8: visual refresh — sleeker, modern interface. Same features as v1.7.
 
 Just run:  python MangaFactory.py
 
@@ -779,172 +781,178 @@ HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MangaFactory v1.7</title>
+<title>MangaFactory v1.8</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #0e0e12; --surface: #16161c; --surface2: #1e1e28; --border: #2a2a38;
-    --accent: #e8441a; --accent2: #f7a23e; --text: #e8e8f0; --muted: #6a6a80;
-    --success: #3ecf8e; --warn: #f7a23e; --danger: #e05252;
-    --mono: 'JetBrains Mono', monospace; --sans: 'Syne', sans-serif;
+    --bg: #07080c; --surface: #0e1016; --surface2: #161925; --border: #1f2332;
+    --border-hi: #2b3045;
+    --accent: #ff5a2e; --accent2: #ffb066; --accent-soft: rgba(255,90,46,0.10);
+    --text: #eef0f6; --muted: #7e8499;
+    --success: #34d399; --warn: #fbbf24; --danger: #f87171;
+    --mono: 'JetBrains Mono', monospace; --sans: 'Space Grotesk', sans-serif;
+    --r-lg: 16px; --r-md: 12px; --r-sm: 9px;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text); font-family: var(--sans); min-height: 100vh; overflow-x: hidden; }
+  body { background: var(--bg); color: var(--text); font-family: var(--sans); min-height: 100vh; overflow-x: hidden; -webkit-font-smoothing: antialiased; }
   body::before {
     content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
-    background-image: linear-gradient(rgba(232,68,26,0.03) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(232,68,26,0.03) 1px, transparent 1px);
-    background-size: 40px 40px;
+    background:
+      radial-gradient(640px 320px at 12% -4%, rgba(255,90,46,0.07), transparent 70%),
+      radial-gradient(900px 420px at 88% -8%, rgba(94,118,255,0.05), transparent 70%);
   }
-  .container { position: relative; z-index: 1; max-width: 900px; margin: 0 auto; padding: 40px 24px 80px; }
-  header { display: flex; align-items: flex-end; gap: 16px; margin-bottom: 28px; padding-bottom: 24px; border-bottom: 1px solid var(--border); }
-  .logo-mark { width: 48px; height: 48px; background: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 22px; flex-shrink: 0; clip-path: polygon(0 0, 85% 0, 100% 15%, 100% 100%, 15% 100%, 0 85%); }
-  h1 { font-size: 28px; font-weight: 800; letter-spacing: -0.5px; line-height: 1; }
-  h1 span { color: var(--accent); }
-  .version { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-left: auto; padding-bottom: 4px; }
+  .container { position: relative; z-index: 1; max-width: 900px; margin: 0 auto; padding: 44px 24px 88px; }
 
-  /* Tabs */
-  .tabs { display: flex; gap: 4px; margin-bottom: 24px; border-bottom: 1px solid var(--border); }
-  .tab { background: transparent; border: none; color: var(--muted); font-family: var(--sans); font-size: 13px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; padding: 14px 22px; cursor: pointer; border-bottom: 2px solid transparent; transition: color 0.15s, border-color 0.15s; }
+  header { display: flex; align-items: center; gap: 16px; margin-bottom: 26px; padding-bottom: 22px; border-bottom: 1px solid var(--border); }
+  .logo-mark { width: 46px; height: 46px; border-radius: 14px; background: linear-gradient(135deg, #ff7c52, #e8441a); display: flex; align-items: center; justify-content: center; font-size: 17px; font-weight: 700; letter-spacing: -0.5px; color: #fff; flex-shrink: 0; box-shadow: 0 6px 18px rgba(255,90,46,0.35), inset 0 1px 0 rgba(255,255,255,0.25); }
+  h1 { font-size: 27px; font-weight: 700; letter-spacing: -0.7px; line-height: 1; }
+  h1 span { color: var(--accent); }
+  .tagline { font-size: 13px; color: var(--muted); margin-top: 4px; letter-spacing: 0.2px; }
+  .version { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-left: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px; }
+
+  /* Tabs — segmented pill */
+  .tabs { display: flex; width: max-content; gap: 4px; margin-bottom: 24px; background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 4px; }
+  .tab { background: transparent; border: none; color: var(--muted); font-family: var(--sans); font-size: 14px; font-weight: 600; letter-spacing: 0.1px; padding: 9px 22px; cursor: pointer; border-radius: 999px; transition: color 0.15s, background 0.15s, box-shadow 0.15s; }
   .tab:hover { color: var(--text); }
-  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab.active { color: #fff; background: linear-gradient(135deg, #ff7c52, #e8441a); box-shadow: 0 4px 14px rgba(255,90,46,0.30); }
   .tab-content { display: none; }
-  .tab-content.active { display: block; animation: fadeIn 0.2s ease-out; }
-  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  .tab-content.active { display: block; animation: fadeIn 0.25s ease-out; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 
   /* Cards / inputs shared */
-  .card { background: var(--surface); border: 1px solid var(--border); padding: 24px; margin-bottom: 20px; }
-  .card-title { font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); margin-bottom: 16px; }
+  .card { background: linear-gradient(180deg, rgba(255,255,255,0.025), rgba(255,255,255,0) 60%), var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 24px; margin-bottom: 16px; box-shadow: 0 14px 36px rgba(0,0,0,0.30); }
+  .card-title { font-size: 11px; font-weight: 600; letter-spacing: 1.8px; text-transform: uppercase; color: var(--muted); margin-bottom: 16px; }
   .input-row { display: flex; gap: 10px; }
-  input[type="text"] { flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text); font-family: var(--mono); font-size: 13px; padding: 12px 16px; outline: none; transition: border-color 0.2s; }
-  input[type="text"]:focus { border-color: var(--accent); }
-  input[type="text"]::placeholder { color: var(--muted); }
-  .btn { background: var(--accent); color: #fff; border: none; font-family: var(--sans); font-size: 13px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; padding: 12px 22px; cursor: pointer; transition: background 0.15s, transform 0.1s; white-space: nowrap; }
-  .btn:hover { background: #ff5a30; }
-  .btn:active { transform: scale(0.98); }
-  .btn:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; transform: none; }
-  .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
-  .btn-ghost:hover { border-color: var(--accent); background: transparent; color: var(--accent); }
-  .btn-sm { font-size: 11px; padding: 6px 14px; }
-  .btn-success { background: var(--success); }
-  .btn-success:hover { background: #2eb87a; }
+  input[type="text"] { flex: 1; background: var(--bg); border: 1px solid var(--border-hi); border-radius: var(--r-sm); color: var(--text); font-family: var(--mono); font-size: 13px; padding: 12px 16px; outline: none; transition: border-color 0.2s, box-shadow 0.2s; }
+  input[type="text"]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  input[type="text"]::placeholder { color: var(--muted); opacity: 0.7; }
+  .btn { background: linear-gradient(135deg, #ff7c52, #e8441a); color: #fff; border: none; border-radius: var(--r-sm); font-family: var(--sans); font-size: 14px; font-weight: 600; letter-spacing: 0.2px; padding: 12px 22px; cursor: pointer; transition: filter 0.15s, transform 0.12s, box-shadow 0.15s; white-space: nowrap; box-shadow: 0 4px 14px rgba(255,90,46,0.25); }
+  .btn:hover { filter: brightness(1.08); transform: translateY(-1px); box-shadow: 0 7px 20px rgba(255,90,46,0.35); }
+  .btn:active { transform: translateY(0) scale(0.98); }
+  .btn:disabled { background: var(--surface2); color: var(--muted); cursor: not-allowed; transform: none; box-shadow: none; filter: none; }
+  .btn-ghost { background: transparent; border: 1px solid var(--border-hi); color: var(--text); box-shadow: none; }
+  .btn-ghost:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); filter: none; transform: none; box-shadow: none; }
+  .btn-sm { font-size: 12px; padding: 7px 14px; border-radius: 8px; }
+  .btn-success { background: linear-gradient(135deg, #3ddfa0, #1ca878); box-shadow: 0 4px 14px rgba(52,211,153,0.25); }
+  .btn-success:hover { filter: brightness(1.06); box-shadow: 0 7px 20px rgba(52,211,153,0.32); }
 
   /* MDF-specific styles */
-  #manga-info { display: none; align-items: center; gap: 16px; padding: 16px 20px; background: var(--surface2); border: 1px solid var(--border); border-left: 3px solid var(--accent); margin-bottom: 20px; }
-  .manga-title-display { font-size: 18px; font-weight: 700; }
-  .manga-meta { font-family: var(--mono); font-size: 11px; color: var(--muted); }
-  .gap-alert { display: none; background: rgba(247,162,62,0.08); border: 1px solid rgba(247,162,62,0.3); border-left: 3px solid var(--warn); padding: 12px 16px; margin-bottom: 16px; font-size: 13px; color: var(--warn); }
-  .gap-alert strong { display: block; margin-bottom: 4px; font-size: 12px; letter-spacing: 1px; text-transform: uppercase; }
+  #manga-info { display: none; align-items: center; gap: 16px; padding: 18px 22px; background: var(--surface2); border: 1px solid var(--border-hi); border-radius: var(--r-md); margin-bottom: 16px; }
+  .manga-title-display { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; }
+  .manga-meta { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 3px; }
+  .gap-alert { display: none; background: rgba(251,191,36,0.07); border: 1px solid rgba(251,191,36,0.28); border-radius: var(--r-md); padding: 14px 18px; margin-bottom: 16px; font-size: 13px; color: var(--warn); }
+  .gap-alert strong { display: block; margin-bottom: 4px; font-size: 11px; letter-spacing: 1.4px; text-transform: uppercase; }
   #chapter-section { display: none; }
   .chapter-controls { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; }
   .chapter-controls .spacer { flex: 1; }
-  .filter-input { background: var(--bg); border: 1px solid var(--border); color: var(--text); font-family: var(--mono); font-size: 12px; padding: 6px 12px; width: 160px; outline: none; }
-  .filter-input:focus { border-color: var(--accent); }
-  .volume-header { display: flex; align-items: center; gap: 10px; padding: 8px 16px; background: var(--surface2); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 2; user-select: none; cursor: pointer; }
-  .volume-header:hover { background: #22222e; }
+  .filter-input { background: var(--bg); border: 1px solid var(--border-hi); border-radius: 8px; color: var(--text); font-family: var(--mono); font-size: 12px; padding: 7px 12px; width: 170px; outline: none; transition: border-color 0.2s, box-shadow 0.2s; }
+  .filter-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .volume-header { display: flex; align-items: center; gap: 10px; padding: 9px 16px; background: var(--surface2); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 2; user-select: none; cursor: pointer; }
+  .volume-header:hover { background: #1b1f2e; }
   .vol-label { font-family: var(--mono); font-size: 10px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--accent2); }
-  .vol-cbz-badge { font-family: var(--mono); font-size: 9px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); border: 1px solid var(--border); padding: 1px 6px; border-radius: 2px; }
+  .vol-cbz-badge { font-family: var(--mono); font-size: 9px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); border: 1px solid var(--border-hi); padding: 2px 8px; border-radius: 999px; }
   .vol-meta { font-family: var(--mono); font-size: 10px; color: var(--muted); margin-left: auto; }
-  .chapter-list { max-height: 420px; overflow-y: auto; border: 1px solid var(--border); }
-  .chapter-list::-webkit-scrollbar { width: 4px; }
-  .chapter-list::-webkit-scrollbar-track { background: var(--bg); }
-  .chapter-list::-webkit-scrollbar-thumb { background: var(--border); }
+  .chapter-list { max-height: 420px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--r-md); }
+  .chapter-list::-webkit-scrollbar { width: 8px; }
+  .chapter-list::-webkit-scrollbar-track { background: transparent; }
+  .chapter-list::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 99px; border: 2px solid var(--surface); }
   .chapter-row { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.1s; user-select: none; }
   .chapter-row:last-child { border-bottom: none; }
   .chapter-row:hover { background: var(--surface2); }
-  .chapter-row.selected { background: rgba(232,68,26,0.07); }
-  .chapter-row input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px; flex-shrink: 0; }
+  .chapter-row.selected { background: var(--accent-soft); }
+  .chapter-row input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; flex-shrink: 0; }
   .ch-num { font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--accent); width: 60px; flex-shrink: 0; }
   .ch-title { font-size: 13px; flex: 1; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ch-pages { font-family: var(--mono); font-size: 11px; color: var(--muted); flex-shrink: 0; }
-  .ch-status { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--border); }
-  .ch-status.done { background: var(--success); }
-  .ch-status.error { background: var(--accent); }
+  .ch-status { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--border-hi); }
+  .ch-status.done { background: var(--success); box-shadow: 0 0 8px rgba(52,211,153,0.5); }
+  .ch-status.error { background: var(--danger); }
   .ch-status.downloading { background: var(--warn); animation: pulse 1s infinite; }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
   #volume-summary { display: none; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
-  .vol-pill { background: var(--surface2); border: 1px solid var(--border); border-radius: 2px; padding: 6px 12px; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .vol-pill { background: var(--surface); border: 1px solid var(--border-hi); border-radius: 999px; padding: 6px 14px; font-family: var(--mono); font-size: 11px; color: var(--muted); }
   .vol-pill strong { color: var(--accent2); }
   .cbz-toggle-row { display: flex; align-items: center; gap: 12px; padding: 14px 0 16px; border-top: 1px solid var(--border); margin-top: 4px; }
-  .toggle-wrap { position: relative; width: 40px; height: 22px; flex-shrink: 0; }
+  .toggle-wrap { position: relative; width: 42px; height: 24px; flex-shrink: 0; }
   .toggle-wrap input { opacity: 0; width: 0; height: 0; }
-  .toggle-slider { position: absolute; inset: 0; background: var(--border); border-radius: 22px; cursor: pointer; transition: background 0.2s; }
-  .toggle-slider::before { content: ''; position: absolute; width: 16px; height: 16px; left: 3px; top: 3px; background: var(--muted); border-radius: 50%; transition: transform 0.2s, background 0.2s; }
-  .toggle-wrap input:checked + .toggle-slider { background: rgba(232,68,26,0.3); }
-  .toggle-wrap input:checked + .toggle-slider::before { transform: translateX(18px); background: var(--accent); }
+  .toggle-slider { position: absolute; inset: 0; background: var(--border-hi); border-radius: 99px; cursor: pointer; transition: background 0.2s; }
+  .toggle-slider::before { content: ''; position: absolute; width: 18px; height: 18px; left: 3px; top: 3px; background: var(--muted); border-radius: 50%; transition: transform 0.2s, background 0.2s; }
+  .toggle-wrap input:checked + .toggle-slider { background: var(--accent); }
+  .toggle-wrap input:checked + .toggle-slider::before { transform: translateX(18px); background: #fff; }
   .cbz-label { font-size: 13px; font-weight: 600; }
-  .cbz-sublabel { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .cbz-sublabel { font-family: var(--mono); font-size: 11px; color: var(--muted); line-height: 1.6; }
   .cbz-progress-section { display: none; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
   .cbz-vol-list { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
   .cbz-vol-row { display: flex; align-items: center; gap: 10px; font-family: var(--mono); font-size: 11px; color: var(--muted); }
   .cbz-vol-icon { width: 14px; text-align: center; }
   .cbz-vol-icon.done { color: var(--success); }
   .cbz-vol-icon.building { color: var(--warn); animation: pulse 1s infinite; }
-  .cbz-vol-icon.err { color: var(--accent); }
+  .cbz-vol-icon.err { color: var(--danger); }
   .outdir-row { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; }
   .outdir-label { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
   #progress-section { display: none; }
-  .overall-progress { margin-bottom: 20px; }
-  .progress-label { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 11px; color: var(--muted); margin-bottom: 6px; }
-  .progress-bar-wrap { background: var(--bg); border: 1px solid var(--border); height: 6px; }
-  .progress-bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width 0.3s ease; width: 0%; }
+  .overall-progress { margin-bottom: 18px; }
+  .progress-label { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 11px; color: var(--muted); margin-bottom: 7px; }
+  .progress-bar-wrap { background: var(--surface2); height: 8px; border-radius: 99px; overflow: hidden; }
+  .progress-bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); border-radius: 99px; transition: width 0.3s ease; width: 0%; }
   .current-chapter-info { font-family: var(--mono); font-size: 12px; color: var(--accent2); margin-bottom: 12px; }
-  .log-box { background: var(--bg); border: 1px solid var(--border); font-family: var(--mono); font-size: 11px; color: var(--muted); padding: 12px 16px; max-height: 160px; overflow-y: auto; line-height: 1.8; }
-  .log-box::-webkit-scrollbar { width: 3px; }
-  .log-box::-webkit-scrollbar-thumb { background: var(--border); }
+  .log-box { background: #05060a; border: 1px solid var(--border); border-radius: var(--r-md); font-family: var(--mono); font-size: 11px; color: var(--muted); padding: 14px 16px; max-height: 160px; overflow-y: auto; line-height: 1.8; }
+  .log-box::-webkit-scrollbar { width: 6px; }
+  .log-box::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 99px; }
   .log-line { display: block; }
   .log-line.ok { color: var(--success); }
-  .log-line.err { color: var(--accent); }
+  .log-line.err { color: var(--danger); }
   .log-line.info { color: var(--accent2); }
   .log-line.skip { color: var(--muted); }
   .log-line.warn { color: var(--warn); }
-  .done-banner { display: none; background: rgba(62,207,142,0.08); border: 1px solid rgba(62,207,142,0.3); border-left: 3px solid var(--success); padding: 16px 20px; margin-top: 16px; font-weight: 700; color: var(--success); font-size: 14px; letter-spacing: 0.5px; }
+  .done-banner { display: none; background: rgba(52,211,153,0.08); border: 1px solid rgba(52,211,153,0.30); border-radius: var(--r-md); padding: 16px 20px; margin-top: 16px; font-weight: 600; color: var(--success); font-size: 14px; letter-spacing: 0.2px; }
   .done-actions { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
   #loading-spinner, #cbz-loading-spinner { display: none; font-family: var(--mono); font-size: 12px; color: var(--muted); margin-top: 10px; }
-  .spinner { display: inline-block; animation: spin 1s linear infinite; margin-right: 6px; }
+  .spinner { display: inline-block; animation: spin 1s linear infinite; margin-right: 6px; color: var(--accent); }
   @keyframes spin { to { transform: rotate(360deg); } }
   .selection-count { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 
   /* CBZ Processor tab */
   #cbz-file-list { display: flex; flex-direction: column; gap: 8px; }
-  .cbz-file-row { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: var(--surface2); border: 1px solid var(--border); transition: border-color 0.2s; }
+  .cbz-file-row { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--r-md); transition: border-color 0.2s; }
   .cbz-file-row.status-active { border-color: var(--accent); }
-  .cbz-file-row.status-done   { border-color: rgba(62,207,142,0.45); }
-  .cbz-file-row.status-error  { border-color: rgba(224,82,82,0.5); }
-  .cbz-file-icon { width: 32px; height: 32px; background: rgba(232,68,26,0.12); border: 1px solid rgba(232,68,26,0.4); display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; }
+  .cbz-file-row.status-done   { border-color: rgba(52,211,153,0.45); }
+  .cbz-file-row.status-error  { border-color: rgba(248,113,113,0.5); }
+  .cbz-file-icon { width: 34px; height: 34px; border-radius: 10px; background: var(--accent-soft); border: 1px solid rgba(255,90,46,0.30); color: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; }
   .cbz-file-details { flex: 1; min-width: 0; }
   .cbz-file-name { font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .cbz-file-meta { font-family: var(--mono); font-size: 10px; color: var(--muted); margin-top: 2px; }
   .cbz-chapter-wrap { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
-  .cbz-badge { font-family: var(--mono); font-size: 9px; padding: 2px 7px; font-weight: 700; letter-spacing: 0.5px; border: 1px solid; }
-  .cbz-badge.auto   { background: rgba(62,207,142,0.12); color: var(--success); border-color: rgba(62,207,142,0.35); }
-  .cbz-badge.manual { background: rgba(247,162,62,0.12); color: var(--warn);    border-color: rgba(247,162,62,0.35); }
-  .cbz-chapter-input-group { display: flex; align-items: stretch; border: 1px solid var(--border); background: var(--bg); }
-  .cbz-chapter-input-group:focus-within { border-color: var(--accent); }
+  .cbz-badge { font-family: var(--mono); font-size: 9px; padding: 3px 9px; font-weight: 700; letter-spacing: 0.5px; border: 1px solid; border-radius: 999px; }
+  .cbz-badge.auto   { background: rgba(52,211,153,0.10); color: var(--success); border-color: rgba(52,211,153,0.35); }
+  .cbz-badge.manual { background: rgba(251,191,36,0.10); color: var(--warn);    border-color: rgba(251,191,36,0.35); }
+  .cbz-chapter-input-group { display: flex; align-items: stretch; border: 1px solid var(--border-hi); border-radius: 8px; overflow: hidden; background: var(--bg); transition: border-color 0.2s, box-shadow 0.2s; }
+  .cbz-chapter-input-group:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
   .cbz-chapter-prefix { font-family: var(--mono); font-size: 11px; color: var(--muted); padding: 6px 8px; border-right: 1px solid var(--border); background: var(--surface); display: flex; align-items: center; }
   .cbz-chapter-input { border: none; background: transparent; color: var(--text); font-family: var(--mono); font-size: 12px; font-weight: 600; padding: 6px 8px; width: 80px; outline: none; }
-  .cbz-file-remove { background: transparent; border: none; color: var(--muted); cursor: pointer; font-size: 14px; padding: 4px 8px; flex-shrink: 0; transition: color 0.15s; }
-  .cbz-file-remove:hover { color: var(--danger); }
-  .cbz-status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--border); }
+  .cbz-file-remove { background: transparent; border: none; color: var(--muted); cursor: pointer; font-size: 14px; padding: 4px 8px; border-radius: 6px; flex-shrink: 0; transition: color 0.15s, background 0.15s; }
+  .cbz-file-remove:hover { color: var(--danger); background: rgba(248,113,113,0.10); }
+  .cbz-status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--border-hi); }
   .cbz-status-dot.active { background: var(--warn); animation: pulse 1s infinite; }
   .cbz-status-dot.done { background: var(--success); }
   .cbz-status-dot.error { background: var(--danger); }
   .cbz-settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
   @media (max-width: 640px) { .cbz-settings-grid { grid-template-columns: 1fr; } }
   .cbz-field-label { font-family: var(--mono); font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; display: block; }
-  .cbz-field-hint { font-family: var(--mono); font-size: 10px; color: var(--muted); margin-top: 4px; }
+  .cbz-field-hint { font-family: var(--mono); font-size: 10px; color: var(--muted); margin-top: 6px; }
   .cbz-mode-row { display: flex; gap: 8px; margin-top: 10px; }
-  .cbz-mode-btn { flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--muted); font-family: var(--mono); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; padding: 10px; cursor: pointer; transition: all 0.15s; }
+  .cbz-mode-btn { flex: 1; background: var(--bg); border: 1px solid var(--border-hi); border-radius: var(--r-sm); color: var(--muted); font-family: var(--sans); font-size: 13px; font-weight: 600; padding: 11px 10px; cursor: pointer; transition: all 0.15s; }
   .cbz-mode-btn:hover { color: var(--text); border-color: var(--accent2); }
-  .cbz-mode-btn.active { background: rgba(232,68,26,0.08); border-color: var(--accent); color: var(--accent); }
-  .empty-state { padding: 32px; text-align: center; color: var(--muted); font-family: var(--mono); font-size: 12px; border: 1px dashed var(--border); }
+  .cbz-mode-btn.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  .empty-state { padding: 32px; text-align: center; color: var(--muted); font-family: var(--mono); font-size: 12px; border: 1px dashed var(--border-hi); border-radius: var(--r-md); }
 
   /* Drag & drop zone */
-  .drop-zone { border: 2px dashed var(--border); padding: 32px 24px; text-align: center; cursor: default; transition: border-color 0.2s, background 0.2s; }
-  .drop-zone.drag-over { border-color: var(--accent); background: rgba(232,68,26,0.05); }
-  .drop-zone-icon { font-size: 32px; margin-bottom: 10px; }
-  .drop-zone-label { font-size: 14px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+  .drop-zone { border: 1.5px dashed var(--border-hi); border-radius: var(--r-md); padding: 34px 24px; text-align: center; cursor: default; transition: border-color 0.2s, background 0.2s; }
+  .drop-zone:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .drop-zone.drag-over { border-color: var(--accent); background: var(--accent-soft); }
+  .drop-zone-icon { width: 46px; height: 46px; margin: 0 auto 12px; border-radius: 14px; background: var(--accent-soft); border: 1px solid rgba(255,90,46,0.30); color: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 20px; }
+  .drop-zone-label { font-size: 15px; font-weight: 600; color: var(--text); margin-bottom: 5px; }
   .drop-zone-hint { font-family: var(--mono); font-size: 11px; color: var(--muted); }
   .upload-status { font-family: var(--mono); font-size: 11px; color: var(--accent2); margin-top: 10px; min-height: 1em; }
 </style>
@@ -952,17 +960,17 @@ HTML = r"""<!DOCTYPE html>
 <body>
 <div class="container">
   <header>
-    <div class="logo-mark">⚙️</div>
+    <div class="logo-mark">MF</div>
     <div>
       <h1>Manga<span>Factory</span></h1>
-      <div style="font-size:12px; color:var(--muted); margin-top:3px;">Download · Process · Package</div>
+      <div class="tagline">Download · Process · Package</div>
     </div>
-    <div class="version">v1.7</div>
+    <div class="version">v1.8</div>
   </header>
 
   <div class="tabs">
-    <button class="tab active" data-tab="download">📥 Download</button>
-    <button class="tab" data-tab="cbz">📦 CBZ Processor</button>
+    <button class="tab active" data-tab="download">Download</button>
+    <button class="tab" data-tab="cbz">CBZ Processor</button>
   </div>
 
   <!-- ─── DOWNLOAD TAB ──────────────────────────────────────────────────────── -->
@@ -993,7 +1001,7 @@ HTML = r"""<!DOCTYPE html>
         <span><b style="color:var(--accent2)">4.</b> Drop the .cbz into CBZ Processor</span>
       </div>
       <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-        <a id="comix-bm" class="btn" href="#" draggable="true" style="text-decoration:none;">📥 Comix → CBZ</a>
+        <a id="comix-bm" class="btn" href="#" draggable="true" style="text-decoration:none;">Comix → CBZ</a>
         <button class="btn btn-ghost btn-sm" id="comix-copy-bm">Copy bookmarklet</button>
         <button class="btn btn-ghost btn-sm" id="comix-copy-src">Copy console snippet</button>
         <span class="cbz-sublabel" id="comix-copied" style="color:var(--success);"></span>
@@ -1007,9 +1015,9 @@ HTML = r"""<!DOCTYPE html>
     <script type="text/plain" id="comix-src">(async () => {
   let box = document.getElementById('mf-grab'); if (box) box.remove();
   box = document.createElement('div'); box.id = 'mf-grab';
-  box.style.cssText = 'position:fixed;top:12px;right:12px;z-index:2147483647;background:#16161c;color:#e8e8f0;font:13px/1.5 ui-monospace,monospace;padding:14px 16px;border:1px solid #e8441a;border-radius:6px;max-width:320px;box-shadow:0 6px 24px rgba(0,0,0,.5)';
+  box.style.cssText = 'position:fixed;top:12px;right:12px;z-index:2147483647;background:#0e1016;color:#eef0f6;font:13px/1.5 ui-monospace,monospace;padding:14px 16px;border:1px solid #ff5a2e;border-radius:12px;max-width:320px;box-shadow:0 6px 24px rgba(0,0,0,.5)';
   document.body.appendChild(box);
-  const log = m => { box.innerHTML = '<b style="color:#e8441a">MangaFactory · Comix grab</b><br>' + m; };
+  const log = m => { box.innerHTML = '<b style="color:#ff5a2e">MangaFactory · Comix grab</b><br>' + m; };
   log('Starting…');
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const readerImg = [...document.querySelectorAll('img')].map(i => i.currentSrc || i.src).find(s => /\/i4\//.test(s));
@@ -1117,9 +1125,9 @@ HTML = r"""<!DOCTYPE html>
         <div class="cbz-toggle-row" style="flex-direction:column; align-items:stretch; gap:8px;">
           <div class="cbz-label">Packaging</div>
           <div class="cbz-mode-row">
-            <button class="cbz-mode-btn active" id="dl-mode-images" onclick="dlSetMode('images')">🖼 Images</button>
-            <button class="cbz-mode-btn" id="dl-mode-volume" onclick="dlSetMode('volume')">📚 One CBZ / Volume</button>
-            <button class="cbz-mode-btn" id="dl-mode-chapter" onclick="dlSetMode('chapter')">📦 One CBZ / Chapter</button>
+            <button class="cbz-mode-btn active" id="dl-mode-images" onclick="dlSetMode('images')">Images</button>
+            <button class="cbz-mode-btn" id="dl-mode-volume" onclick="dlSetMode('volume')">One CBZ / Volume</button>
+            <button class="cbz-mode-btn" id="dl-mode-chapter" onclick="dlSetMode('chapter')">One CBZ / Chapter</button>
           </div>
           <div class="cbz-sublabel" id="cbz-sublabel">Saves raw page images into Downloaded/ — no packaging.</div>
         </div>
@@ -1138,18 +1146,18 @@ HTML = r"""<!DOCTYPE html>
         <div class="overall-progress">
           <div class="progress-label"><span>Chapters</span><span id="ch-progress-text">0 / 0</span></div>
           <div class="progress-bar-wrap">
-            <div class="progress-bar-fill" id="ch-bar" style="background: linear-gradient(90deg, var(--success), #2eb87a);"></div>
+            <div class="progress-bar-fill" id="ch-bar" style="background: linear-gradient(90deg, var(--success), #6ee7b7);"></div>
           </div>
         </div>
         <div class="log-box" id="log-box"></div>
         <div class="cbz-progress-section" id="cbz-progress-section">
-          <div class="card-title" style="margin-bottom:10px;">📦 Building CBZ Volumes</div>
+          <div class="card-title" style="margin-bottom:10px;">Building CBZ Volumes</div>
           <div class="cbz-vol-list" id="cbz-vol-list"></div>
         </div>
         <div class="done-banner" id="done-banner">✓ Done!</div>
         <div class="done-actions">
           <button class="btn btn-ghost btn-sm" id="cancel-btn" onclick="cancelDownload()">Cancel</button>
-          <button class="btn btn-sm" id="send-to-cbz-btn" style="display:none" onclick="sendToCbzProcessor()">📦 Send to CBZ Processor →</button>
+          <button class="btn btn-sm" id="send-to-cbz-btn" style="display:none" onclick="sendToCbzProcessor()">Send to CBZ Processor →</button>
         </div>
       </div>
     </div>
@@ -1166,7 +1174,7 @@ HTML = r"""<!DOCTYPE html>
     <div class="card">
       <div class="card-title">Add Files</div>
       <div class="drop-zone" id="cbz-drop-zone" style="cursor:pointer">
-        <div class="drop-zone-icon">📂</div>
+        <div class="drop-zone-icon">↓</div>
         <div class="drop-zone-label">Drop files here or click to browse</div>
         <div class="drop-zone-hint">.cbz files · a .zip archive · or image files (jpg, png, webp…) to bundle into a new CBZ</div>
       </div>
@@ -1213,8 +1221,8 @@ HTML = r"""<!DOCTYPE html>
         </div>
         <label class="cbz-field-label" style="margin-top: 10px;">Output Mode</label>
         <div class="cbz-mode-row">
-          <button class="cbz-mode-btn active" id="cbz-mode-cbz" onclick="cbzSetMode('cbz')">📦 Single CBZ</button>
-          <button class="cbz-mode-btn" id="cbz-mode-folder" onclick="cbzSetMode('folder')">📁 Folder Tree</button>
+          <button class="cbz-mode-btn active" id="cbz-mode-cbz" onclick="cbzSetMode('cbz')">Single CBZ</button>
+          <button class="cbz-mode-btn" id="cbz-mode-folder" onclick="cbzSetMode('folder')">Folder Tree</button>
         </div>
         <div class="cbz-field-hint" id="cbz-mode-hint" style="margin-top: 8px;">Packages everything into a single Volume_XX.cbz file.</div>
         <button class="btn btn-success" id="cbz-process-btn" onclick="cbzStart()" style="margin-top: 18px;">Process Files</button>
@@ -1233,7 +1241,7 @@ HTML = r"""<!DOCTYPE html>
         <div class="overall-progress">
           <div class="progress-label"><span>Files</span><span id="cbz-file-progress-text">0 / 0</span></div>
           <div class="progress-bar-wrap">
-            <div class="progress-bar-fill" id="cbz-file-bar" style="background: linear-gradient(90deg, var(--success), #2eb87a);"></div>
+            <div class="progress-bar-fill" id="cbz-file-bar" style="background: linear-gradient(90deg, var(--success), #6ee7b7);"></div>
           </div>
         </div>
         <div class="log-box" id="cbz-log-box"></div>
@@ -1515,7 +1523,7 @@ function cbzRenderRow(item) {
   const isAuto = item.chapter !== '' && item.chapter === item.detected_chapter;
   el.innerHTML = `
     <div class="cbz-status-dot" id="cbz-dot-${item.id}"></div>
-    <div class="cbz-file-icon">📚</div>
+    <div class="cbz-file-icon">▤</div>
     <div class="cbz-file-details">
       <div class="cbz-file-name" title="${item.name}">${item.name}</div>
       <div class="cbz-file-meta">${cbzFormatSize(item.size)}</div>
@@ -2192,7 +2200,7 @@ if __name__ == "__main__":
     # Ensure the default base + Downloaded/ + exported/ subdirs exist
     # so the very first run has a clean folder layout to start from.
     resolve_io_dirs(DOWNLOAD_BASE)
-    print("\n  MangaFactory v1.7")
+    print("\n  MangaFactory v1.8")
     print(f"  Base folder: {DOWNLOAD_BASE}")
     print(f"    ├─ {DOWNLOAD_SUBDIR}/   (raw downloads)")
     print(f"    ├─ {EXPORT_SUBDIR}/   (packaged CBZs)")
