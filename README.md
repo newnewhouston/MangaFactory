@@ -1,28 +1,27 @@
-# MangaFactory v1.8
+# MangaFactory v1.9
 
 A single-file Python app with a browser UI for downloading manga and packaging it into CBZ files. No pip install, no virtual environment — just run the script.
 
 ```bash
-python "MangaFactory 1.8.py"
+python "MangaFactory 1.9.py"
 ```
 
 Opens `http://localhost:5000` automatically. Press `Ctrl+C` to quit.
 
 ---
 
-## What's new in v1.8
+## What's new in v1.9
 
-Visual refresh only — no functional changes.
+**Drop-anything CBZ Processor.** Many `.cbz` files in the wild aren't actually ZIP archives — they're RAR (`.cbr`), 7-Zip (`.cb7`) or tar (`.cbt`) archives that were renamed. Earlier versions rejected these with a bare *"File is not a zip file"*. Now:
 
-- **New font.** Switched from Syne to Space Grotesk.
-- **Darker palette.** Background and surface colors are deeper; accent orange is slightly punchier (`#ff5a2e`). Added `--border-hi` and `--accent-soft` tokens for subtler UI states.
-- **Background treatment.** Replaced the grid-line pattern with soft radial gradient blobs.
-- **Logo.** Emoji ⚙️ replaced with a rounded-rectangle "MF" badge with a gradient fill and drop shadow.
-- **Tabs.** Underline-style navigation replaced with a pill-shaped segmented control. Active tab uses a gradient fill.
-- **Version badge.** Now rendered as a pill with a border rather than plain text.
-- **No emoji in labels.** Button labels and mode selectors (Images, One CBZ / Volume, One CBZ / Chapter, etc.) now use plain text instead of emoji prefixes.
+- **Magic-byte sniffing.** Every queued file is identified by its real content, not its extension — at upload time *and* again at process time (so folder-scanned files are covered too).
+- **Automatic conversion.** A disguised RAR/7z/tar archive is unpacked with the first available extractor and its pages repacked into a genuine ZIP-backed `.cbz`. Extractors are tried in order: WinRAR's `UnRAR`, `7z` (7-Zip), Windows' bundled `tar.exe` (bsdtar, ships with Windows 10+), and Python's own `tarfile`. No new Python dependencies.
+- **`.cbr` / `.cb7` / `.cbt` accepted directly** — in the drop zone, the file picker, folder scans, and nested inside bundle `.zip` files. Chapter-number detection understands the new extensions.
+- **Clear errors instead of the zipfile mumble.** A file that can't be fixed now says what it actually is: an empty file (failed download), a PDF, an HTML error page saved by the site, a corrupted/truncated ZIP, or an archive with no extractor available (with the hint to install 7-Zip or WinRAR).
+- **Conversion is visible.** The upload status and each file's row note what was converted and how many pages came out; the processing log repeats it. Failed uploads no longer vanish after 3 seconds — the error stays on screen.
+- **Progress rows match your filenames.** The worker now reports files by the name you dropped, so status dots and errors line up even for converted or renamed uploads.
 
-Everything from v1.7 — all sources, the download flow, the processor tab, and the `MDF/` layout — works exactly the same.
+Everything else — both download sources, the comix.to browser grab, packaging modes, and the `MDF/` layout — works exactly as in v1.8.
 
 ---
 
@@ -37,7 +36,7 @@ Everything from v1.7 — all sources, the download flow, the processor tab, and 
     └── .mdf_uploads/          ← CBZ Processor scratch (auto-emptied after export)
 ```
 
-All subfolders are created automatically. When CBZ packaging is enabled in Tab 1, raw images in `Downloaded/` are deleted after each `.cbz` is successfully written into `exported/`. The CBZ Processor's single-CBZ output lands in `exported/`; folder-tree mode writes into the base folder directly since it produces a directory of images, not a CBZ.
+All subfolders are created automatically. When CBZ packaging is enabled in Tab 1, raw images in `Downloaded/` are deleted after each `.cbz` is successfully written into `exported/`. The CBZ Processor's single-CBZ output lands in `exported/`; folder-tree mode writes into the base folder directly since it produces a directory of images, not a CBZ. Converted archives live in `.mdf_uploads/` and are wiped with the rest of the scratch space after each export.
 
 ---
 
@@ -113,14 +112,16 @@ The grab runs entirely in your browser and builds the CBZ client-side — no ext
 
 ## Tab 2 — CBZ Processor
 
-Takes existing `.cbz` files, a `.zip` archive, or loose image files and repackages them with consistent naming, an optional cover image, and your choice of output format.
+Takes existing comic archives (`.cbz`, `.cbr`, `.cb7`, `.cbt`), a `.zip` archive, or loose image files and repackages them with consistent naming, an optional cover image, and your choice of output format.
 
 **Loading files** — freely mixed:
-- Drag `.cbz`, `.zip`, or image files onto the drop zone
+- Drag comic archives, `.zip`, or image files onto the drop zone
 - Click the drop zone to browse
 - After a download, click **Send to CBZ Processor →** to hand off the output folder automatically
 
-**`.zip` archives** — a dropped or uploaded `.zip` is inspected: if it contains image files (even nested in sub-folders) it's treated as one chapter's pages; if it bundles several `.cbz` files, each nested chapter is split out and queued separately.
+**Non-zip archives (new in v1.9)** — every file is sniffed by content. RAR/7z/tar archives — including ones misleadingly named `.cbz` — are converted to real ZIP-backed CBZs automatically using whatever extractor is installed (WinRAR, 7-Zip, or Windows' bundled `tar.exe`). Files that can't be processed get a plain-language explanation of what they actually are.
+
+**`.zip` archives** — a dropped or uploaded `.zip` is inspected: if it contains image files (even nested in sub-folders) it's treated as one chapter's pages; if it bundles several comic archives, each nested chapter is split out (and converted if needed) and queued separately.
 
 **Image files** — raw jpg/png/webp/gif/bmp files are bundled into a temporary `.cbz` automatically (sorted naturally) and added to the queue like any other file.
 
@@ -132,7 +133,7 @@ Takes existing `.cbz` files, a `.zip` archive, or loose image files and repackag
 - **Single CBZ** — all chapters packed into one file, pages renamed to `Chapter_XX_page_YYY.ext`, cover inserted as `000_cover.ext`
 - **Folder Tree** — same naming, written to a directory instead
 
-**After export** — the contents of `MDF/.mdf_uploads/` are wiped automatically. The directory itself is kept so the next job can write into it. Cleanup is best-effort; a locked file is skipped silently rather than failing the export.
+**After export** — the contents of `MDF/.mdf_uploads/` are wiped automatically (including any converted archives). The directory itself is kept so the next job can write into it. Cleanup is best-effort; a locked file is skipped silently rather than failing the export.
 
 ---
 
@@ -140,6 +141,7 @@ Takes existing `.cbz` files, a `.zip` archive, or loose image files and repackag
 
 - Python 3.8+
 - Internet on first run — `flask`, `requests`, and `cloudscraper` are installed automatically into `~/Desktop/MangaFactory/MDF/.mdf_libs/`
+- For RAR/7z conversion: any of WinRAR, 7-Zip, or Windows' bundled `tar.exe` (present by default on Windows 10+). Nothing extra is needed for tar/gzip — Python handles those natively
 
 ---
 
