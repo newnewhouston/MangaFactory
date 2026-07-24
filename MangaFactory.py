@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
 """
-MangaFactory v1.8 — combined MangaDexFactory + CBZ Factory, single-file edition.
+MangaFactory v1.9 — combined MangaDexFactory + CBZ Factory, single-file edition.
 
-v1.8: visual refresh — sleeker, modern interface. Same features as v1.7.
+v1.9: drop-anything CBZ Processor. Every queued file is sniffed by magic
+bytes before processing — a ".cbz" that is really a RAR (.cbr), 7-Zip
+(.cb7) or tar (.cbt) archive is unpacked with the first available
+extractor (WinRAR's UnRAR, 7-Zip, Windows' bundled tar.exe, or Python's
+tarfile) and repacked into a genuine ZIP-backed CBZ automatically.
+.cbr/.cb7/.cbt files are also accepted directly now. Files that can't be
+fixed get a clear explanation (empty download, PDF, HTML error page,
+corrupted zip…) instead of v1.8's bare "File is not a zip file".
 
 Just run:  python MangaFactory.py
 
 Tab 1 — Download:      Grab chapters from MangaDex, optionally package as CBZ.
-Tab 2 — CBZ Processor: Take existing .cbz files, loose image files, or a
-                       .zip archive (new in v1.7), rename pages to
+Tab 2 — CBZ Processor: Take existing .cbz/.cbr/.cb7/.cbt files, loose image
+                       files, or a .zip archive (new in v1.7), rename pages to
                        Chapter_XX_page_YYY.ext, insert a cover image
                        (000_cover.ext), and repackage as one volume CBZ
                        or a folder tree.
@@ -541,7 +548,7 @@ def cbz_detect_chapter_number(filename):
       2) Otherwise fall back to any 1–3 digit number in the filename, which
          avoids accidentally grabbing 4-digit years.
     """
-    name = re.sub(r'\.(cbz|zip)$', '', filename, flags=re.IGNORECASE)
+    name = re.sub(r'\.(cbz|cbr|cb7|cbt|zip)$', '', filename, flags=re.IGNORECASE)
     # Keyword-anchored patterns first — allow up to 4 digits when prefixed.
     patterns = [
         re.compile(r'(?:chapter|chap|ch|c)[\s._-]*(\d{1,4})', re.IGNORECASE),
@@ -572,6 +579,188 @@ def cbz_list_image_entries(zf):
             entries.append(info.filename)
     entries.sort(key=cbz_sort_key)
     return entries
+
+def cbz_sniff_format(path):
+    """v1.9: identify what a '.cbz' file actually is, by magic bytes.
+
+    Plenty of files in the wild carry a .cbz extension but are really RAR
+    (.cbr), 7-Zip (.cb7) or tar (.cbt) archives — those made zipfile choke
+    with the bare 'File is not a zip file' error in earlier versions.
+    """
+    try:
+        with open(path, 'rb') as fh:
+            head = fh.read(8)
+            fh.seek(257)
+            tar_magic = fh.read(5)
+    except OSError:
+        return "unreadable"
+    if not head:
+        return "empty"
+    if head[:4] in (b'PK\x03\x04', b'PK\x05\x06', b'PK\x07\x08'):
+        return "zip"
+    if head.startswith(b'Rar!\x1a\x07'):
+        return "rar"
+    if head.startswith(b'7z\xbc\xaf\x27\x1c'):
+        return "7z"
+    if head.startswith(b'\x1f\x8b'):
+        return "gzip"
+    if head.startswith(b'%PDF'):
+        return "pdf"
+    if head.lstrip()[:1] == b'<':
+        return "html"
+    if tar_magic == b'ustar':
+        return "tar"
+    return "unknown"
+
+_CBZ_FMT_LABEL = {
+    "rar":  "a RAR archive (a .cbr renamed to .cbz)",
+    "7z":   "a 7-Zip archive (a .cb7 renamed to .cbz)",
+    "tar":  "a tar archive (a .cbt renamed to .cbz)",
+    "gzip": "a gzip archive",
+    "zip":  "a corrupted or truncated ZIP",
+    "empty": "an empty file (0 bytes) — the download probably failed",
+    "pdf":  "a PDF, not a comic archive",
+    "html": "an HTML page — the source site probably served an error page "
+            "instead of the archive",
+    "unknown": "not a recognizable archive format",
+    "unreadable": "unreadable (locked or missing)",
+}
+
+def _archive_extractors(fmt):
+    """Ordered (label, exe) external extractors able to unpack `fmt`.
+
+    UnRAR only speaks RAR; 7-Zip and bsdtar (tar.exe ships with Windows
+    10+) read nearly everything, so they back every format as a fallback
+    chain. Only tools actually present on this machine are returned.
+    """
+    found = []
+    def probe(label, names, guesses):
+        for n in names:
+            p = shutil.which(n)
+            if p:
+                found.append((label, p))
+                return
+        for g in guesses:
+            if os.path.isfile(g):
+                found.append((label, g))
+                return
+    if fmt == "rar":
+        probe("unrar", ["unrar"],
+              [r"C:\Program Files\WinRAR\UnRAR.exe",
+               r"C:\Program Files (x86)\WinRAR\UnRAR.exe"])
+    probe("7z", ["7z", "7za"],
+          [r"C:\Program Files\7-Zip\7z.exe",
+           r"C:\Program Files (x86)\7-Zip\7z.exe"])
+    probe("tar", ["tar", "bsdtar"], [r"C:\Windows\System32\tar.exe"])
+    return found
+
+def _run_extractor(label, exe, archive, out_dir):
+    if label == "unrar":
+        argv = [exe, "x", "-y", "-inul", archive, out_dir + os.sep]
+    elif label == "7z":
+        argv = [exe, "x", "-y", "-o" + out_dir, archive]
+    else:  # bsdtar — auto-detects rar/7z/tar/zip via libarchive
+        argv = [exe, "-xf", archive, "-C", out_dir]
+    try:
+        subprocess.run(argv, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, timeout=600)
+    except Exception:
+        pass  # success is judged by what landed in out_dir, not exit code
+
+def _repack_dir_as_cbz(src_dir, dest_cbz):
+    """Zip every image under src_dir (recursive) into dest_cbz, flattened.
+    Returns the page count; raises ValueError if extraction yielded no
+    images (the caller treats that as 'this extractor didn't work')."""
+    images = []
+    for root, dirs, files_ in os.walk(src_dir):
+        dirs.sort(key=cbz_sort_key)
+        for name in sorted(files_, key=cbz_sort_key):
+            ext = name.rsplit('.', 1)[-1].lower() if '.' in name else ''
+            if ext in IMAGE_EXTS:
+                images.append(os.path.join(root, name))
+    if not images:
+        raise ValueError("no images inside")
+    with zipfile.ZipFile(dest_cbz, 'w', zipfile.ZIP_STORED) as zf:
+        used = set()
+        for fp in images:
+            arc = os.path.relpath(fp, src_dir).replace(os.sep, '_')
+            if arc in used:  # flattening collision — extremely rare
+                b, e = os.path.splitext(arc)
+                n = 2
+                while f"{b}_{n}{e}" in used:
+                    n += 1
+                arc = f"{b}_{n}{e}"
+            used.add(arc)
+            zf.write(fp, arc)
+    return len(images)
+
+def cbz_ensure_zip(path):
+    """v1.9: guarantee `path` is something zipfile can open.
+
+    Returns (usable_path, note). A file that already is a real ZIP passes
+    through untouched (note None). Otherwise its actual format is sniffed
+    and the archive is unpacked with the first extractor that works, its
+    images repacked into a genuine ZIP-backed .cbz in MDF/.mdf_uploads/,
+    and that converted path returned. Raises ValueError with a
+    human-readable explanation when nothing works — never the bare
+    'File is not a zip file' that v1.8 surfaced.
+    """
+    try:
+        with zipfile.ZipFile(path, 'r'):
+            return path, None
+    except (zipfile.BadZipFile, OSError):
+        pass
+    fmt = cbz_sniff_format(path)
+    label = _CBZ_FMT_LABEL.get(fmt, _CBZ_FMT_LABEL["unknown"])
+    if fmt in ("empty", "pdf", "html", "unreadable"):
+        raise ValueError(f"this file is {label}")
+    os.makedirs(CBZ_UPLOAD_DIR, exist_ok=True)
+    ts = int(time.time() * 1000)
+    base = os.path.splitext(os.path.basename(path))[0]
+    extract_dir = os.path.join(CBZ_UPLOAD_DIR, f"_convert_{ts}")
+    dest_cbz = os.path.join(CBZ_UPLOAD_DIR, f"{base}_converted_{ts}.cbz")
+
+    def _attempt(runner, tool_name):
+        shutil.rmtree(extract_dir, ignore_errors=True)
+        os.makedirs(extract_dir, exist_ok=True)
+        runner()
+        try:
+            pages = _repack_dir_as_cbz(extract_dir, dest_cbz)
+        except ValueError:
+            return None
+        finally:
+            shutil.rmtree(extract_dir, ignore_errors=True)
+        return (f"was {label} — auto-converted to a real CBZ "
+                f"({pages} pages, via {tool_name})")
+
+    tried = []
+    if fmt in ("tar", "gzip"):
+        import tarfile
+        def _py_tar():
+            try:
+                with tarfile.open(path, 'r:*') as tf:
+                    try:
+                        tf.extractall(extract_dir, filter='data')
+                    except TypeError:  # Python < 3.12: no filter kwarg
+                        tf.extractall(extract_dir)
+            except Exception:
+                pass
+        note = _attempt(_py_tar, "tarfile")
+        if note:
+            return dest_cbz, note
+        tried.append("tarfile")
+    for tool, exe in _archive_extractors(fmt):
+        note = _attempt(lambda: _run_extractor(tool, exe, path, extract_dir),
+                        tool)
+        if note:
+            return dest_cbz, note
+        tried.append(tool)
+    if tried:
+        raise ValueError(f"this file is {label}, and conversion failed "
+                         f"(tried: {', '.join(tried)}) — the archive may be "
+                         f"corrupted; try re-downloading it")
+    raise ValueError(f"this file is {label} and no extractor is available — "
+                     f"install 7-Zip or WinRAR, then retry")
 
 def cbz_volume_folder_name(volume_value):
     v = (volume_value or "").strip()
@@ -607,14 +796,15 @@ def cbz_output_base_name(volume_value, items):
     return "New Volume", "New_Volume"
 
 def cbz_scan_folder(folder_path):
-    """Scan a folder for .cbz files, return list sorted naturally with detected chapter numbers."""
+    """Scan a folder for comic archives, return list sorted naturally with detected chapter numbers."""
     folder_path = os.path.expanduser(folder_path)
     if not os.path.isdir(folder_path):
         raise ValueError(f"Folder not found: {folder_path}")
     files = []
     for entry in sorted(os.listdir(folder_path), key=cbz_sort_key):
         full = os.path.join(folder_path, entry)
-        if os.path.isfile(full) and entry.lower().endswith('.cbz'):
+        if os.path.isfile(full) and entry.lower().endswith(
+                ('.cbz', '.cbr', '.cb7', '.cbt')):
             try:
                 size = os.path.getsize(full)
             except OSError:
@@ -669,14 +859,21 @@ def cbz_process_worker(session_id, items, volume_value, cover_path,
         total_pages = 0
         item_info = []
         for item in items:
+            display = item.get("name") or os.path.basename(item["path"])
             try:
-                with zipfile.ZipFile(item["path"], 'r') as zf:
+                # v1.9: normalize disguised .cbr/.cb7/.cbt (and corrupted
+                # zips) into real ZIP CBZs before the pipeline opens them.
+                real_path, note = cbz_ensure_zip(item["path"])
+                if note:
+                    q.put({"type": "log", "level": "warn",
+                           "text": f"↻ {display} {note}"})
+                item["path"] = real_path
+                with zipfile.ZipFile(real_path, 'r') as zf:
                     images = cbz_list_image_entries(zf)
                     total_pages += len(images)
                     item_info.append((item, images))
             except Exception as e:
-                q.put({"type": "file_error", "file": os.path.basename(item["path"]),
-                       "error": str(e)})
+                q.put({"type": "file_error", "file": display, "error": str(e)})
                 item_info.append((item, None))
         q.put({"type": "pages_total", "total": total_pages})
 
@@ -712,7 +909,7 @@ def cbz_process_worker(session_id, items, volume_value, cover_path,
                     break
                 if images is None:
                     continue
-                file_name = os.path.basename(item["path"])
+                file_name = item.get("name") or os.path.basename(item["path"])
                 ch_num = (item.get("chapter") or "").strip()
                 if not ch_num:
                     q.put({"type": "file_error", "file": file_name,
@@ -781,7 +978,7 @@ HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MangaFactory v1.8</title>
+<title>MangaFactory v1.9</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
@@ -965,7 +1162,7 @@ HTML = r"""<!DOCTYPE html>
       <h1>Manga<span>Factory</span></h1>
       <div class="tagline">Download · Process · Package</div>
     </div>
-    <div class="version">v1.8</div>
+    <div class="version">v1.9</div>
   </header>
 
   <div class="tabs">
@@ -1176,9 +1373,9 @@ HTML = r"""<!DOCTYPE html>
       <div class="drop-zone" id="cbz-drop-zone" style="cursor:pointer">
         <div class="drop-zone-icon">↓</div>
         <div class="drop-zone-label">Drop files here or click to browse</div>
-        <div class="drop-zone-hint">.cbz files · a .zip archive · or image files (jpg, png, webp…) to bundle into a new CBZ</div>
+        <div class="drop-zone-hint">.cbz / .cbr / .cb7 / .cbt · a .zip archive · or image files (jpg, png, webp…) — non-zip archives are converted automatically</div>
       </div>
-      <input type="file" id="cbz-file-picker" accept=".cbz,.zip,.jpg,.jpeg,.png,.gif,.webp,.bmp" multiple style="display:none" />
+      <input type="file" id="cbz-file-picker" accept=".cbz,.cbr,.cb7,.cbt,.zip,.jpg,.jpeg,.png,.gif,.webp,.bmp" multiple style="display:none" />
       <div class="upload-status" id="cbz-upload-status"></div>
     </div>
 
@@ -1526,7 +1723,7 @@ function cbzRenderRow(item) {
     <div class="cbz-file-icon">▤</div>
     <div class="cbz-file-details">
       <div class="cbz-file-name" title="${item.name}">${item.name}</div>
-      <div class="cbz-file-meta">${cbzFormatSize(item.size)}</div>
+      <div class="cbz-file-meta">${cbzFormatSize(item.size)}${item.note ? ' · ' + item.note : ''}</div>
     </div>
     <div class="cbz-chapter-wrap">
       <span class="cbz-badge ${isAuto ? 'auto' : 'manual'}" id="cbz-badge-${item.id}">${isAuto ? 'AUTO' : 'MANUAL'}</span>
@@ -1632,7 +1829,9 @@ async function cbzStart() {
   cbzQueue.forEach(it => { const d = document.getElementById(`cbz-dot-${it.id}`); if (d) d.className = 'cbz-status-dot'; });
 
   const payload = {
-    items: cbzQueue.map(it => ({ path: it.path, chapter: it.chapter })),
+    // v1.9: pass the display name through so progress rows and errors
+    // reference the file the user dropped, not the converted temp path.
+    items: cbzQueue.map(it => ({ path: it.path, chapter: it.chapter, name: it.name })),
     volume, cover_path: cover, output_dir: outDir, mode: cbzMode,
   };
   const res = await fetch('/api/cbz/process', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
@@ -1729,7 +1928,7 @@ async function cbzCancel() {
 
   const IMAGE_EXTS_JS = new Set(['jpg','jpeg','png','gif','webp','bmp']);
   function isImage(name) { return IMAGE_EXTS_JS.has(name.split('.').pop().toLowerCase()); }
-  function isCbz(name)   { return name.toLowerCase().endsWith('.cbz'); }
+  function isCbz(name)   { return /\.(cbz|cbr|cb7|cbt)$/i.test(name); }
   function isZip(name)   { return name.toLowerCase().endsWith('.zip'); }
 
   // Click → open file picker
@@ -1776,7 +1975,8 @@ async function cbzCancel() {
 
   async function cbzHandleCbzFiles(files) {
     statusEl.textContent = `Uploading ${files.length} CBZ file(s)...`;
-    let added = 0;
+    let added = 0, converted = 0;
+    let lastError = '';
     for (const file of files) {
       statusEl.textContent = `Uploading ${file.name}...`;
       try {
@@ -1784,15 +1984,24 @@ async function cbzCancel() {
         fd.append('file', file);
         const res = await fetch('/api/cbz/upload', { method: 'POST', body: fd });
         const data = await res.json();
-        if (data.error) { statusEl.textContent = `✗ ${file.name}: ${data.error}`; continue; }
+        if (data.error) { lastError = `✗ ${file.name}: ${data.error}`; statusEl.textContent = lastError; continue; }
+        if (data.note) converted++;
         cbzAddToQueue(data);
         added++;
       } catch (err) {
-        statusEl.textContent = `✗ Failed to upload ${file.name}: ${err.message}`;
+        lastError = `✗ Failed to upload ${file.name}: ${err.message}`;
+        statusEl.textContent = lastError;
       }
     }
-    statusEl.textContent = `✓ Added ${added} of ${files.length} CBZ file(s).`;
-    setTimeout(() => { statusEl.textContent = ''; }, 3000);
+    // v1.9: keep a failure on screen instead of overwriting it with the
+    // summary — otherwise a rejected file vanishes after 3 seconds.
+    const convNote = converted ? ` (${converted} auto-converted from RAR/7z/tar)` : '';
+    if (added === files.length) {
+      statusEl.textContent = `✓ Added ${added} of ${files.length} CBZ file(s).${convNote}`;
+      setTimeout(() => { statusEl.textContent = ''; }, 5000);
+    } else {
+      statusEl.textContent = `Added ${added} of ${files.length}.${convNote} ${lastError}`;
+    }
   }
 
   async function cbzHandleZipFiles(files) {
@@ -1991,8 +2200,11 @@ def api_cbz_upload():
         return jsonify({"error": "No file provided"}), 400
     f = request.files['file']
     orig_name = f.filename or ""
-    if not orig_name.lower().endswith('.cbz'):
-        return jsonify({"error": "Only .cbz files are accepted"}), 400
+    # v1.9: accept the whole comic-archive family. Non-zip formats (and
+    # .cbz files that are secretly RAR/7z/tar) are converted to real
+    # ZIP-backed CBZs on the spot by cbz_ensure_zip below.
+    if not orig_name.lower().endswith(('.cbz', '.cbr', '.cb7', '.cbt')):
+        return jsonify({"error": "Only .cbz / .cbr / .cb7 / .cbt files are accepted"}), 400
     os.makedirs(CBZ_UPLOAD_DIR, exist_ok=True)
     safe_name = re.sub(r'[^\w\s\-.]', '_', os.path.basename(orig_name))
     dest_path = os.path.join(CBZ_UPLOAD_DIR, safe_name)
@@ -2001,13 +2213,28 @@ def api_cbz_upload():
         dest_path = os.path.join(CBZ_UPLOAD_DIR,
                                  f"{base}_{int(time.time() * 1000)}{ext}")
     f.save(dest_path)
-    size = os.path.getsize(dest_path)
+    try:
+        real_path, note = cbz_ensure_zip(dest_path)
+    except ValueError as e:
+        try:
+            os.remove(dest_path)
+        except OSError:
+            pass
+        return jsonify({"error": str(e)}), 400
+    if real_path != dest_path:
+        # A converted copy replaced the original upload — drop the original.
+        try:
+            os.remove(dest_path)
+        except OSError:
+            pass
+    size = os.path.getsize(real_path)
     detected = cbz_detect_chapter_number(orig_name)
     return jsonify({
-        "path": dest_path,
+        "path": real_path,
         "name": orig_name,
         "size": size,
         "detected_chapter": detected,
+        "note": note or "",
     })
 
 @app.route("/api/cbz/upload-images", methods=["POST"])
@@ -2079,7 +2306,8 @@ def api_cbz_upload_zip():
     try:
         with zipfile.ZipFile(tmp_zip, 'r') as zf:
             members = [i.filename for i in zf.infolist() if not i.is_dir()]
-            cbz_members = [n for n in members if n.lower().endswith('.cbz')]
+            cbz_members = [n for n in members if n.lower().endswith(
+                ('.cbz', '.cbr', '.cb7', '.cbt'))]
             image_members = [n for n in members
                              if '.' in n
                              and n.rsplit('.', 1)[-1].lower() in IMAGE_EXTS]
@@ -2097,11 +2325,28 @@ def api_cbz_upload_zip():
                             f"{b}_{int(time.time() * 1000)}{ext}")
                     with zf.open(member) as src, open(dest_path, 'wb') as out:
                         shutil.copyfileobj(src, out)
+                    # v1.9: nested archives get the same normalization as
+                    # direct uploads — a bundled .cbr still ends up a real
+                    # ZIP CBZ. A failure is noted but the item stays queued
+                    # so the processor can report it per-file.
+                    note = ""
+                    try:
+                        real_path, note_ = cbz_ensure_zip(dest_path)
+                        if real_path != dest_path:
+                            try:
+                                os.remove(dest_path)
+                            except OSError:
+                                pass
+                            dest_path = real_path
+                        note = note_ or ""
+                    except ValueError as e:
+                        note = f"⚠ {e}"
                     items.append({
                         "path": dest_path,
                         "name": base,
                         "size": os.path.getsize(dest_path),
                         "detected_chapter": cbz_detect_chapter_number(base),
+                        "note": note,
                     })
             elif not image_members:
                 raise ValueError("Zip contains no .cbz or image files")
@@ -2200,7 +2445,7 @@ if __name__ == "__main__":
     # Ensure the default base + Downloaded/ + exported/ subdirs exist
     # so the very first run has a clean folder layout to start from.
     resolve_io_dirs(DOWNLOAD_BASE)
-    print("\n  MangaFactory v1.8")
+    print("\n  MangaFactory v1.9")
     print(f"  Base folder: {DOWNLOAD_BASE}")
     print(f"    ├─ {DOWNLOAD_SUBDIR}/   (raw downloads)")
     print(f"    ├─ {EXPORT_SUBDIR}/   (packaged CBZs)")
