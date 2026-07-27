@@ -1,6 +1,24 @@
 #!/usr/bin/env python3
 """
-MangaFactory v1.9 — combined MangaDexFactory + CBZ Factory, single-file edition.
+MangaFactory v2.0 — combined MangaDexFactory + CBZ Factory, single-file edition.
+
+v2.0: drag-and-drop cover + visual redesign.
+
+The CBZ Processor's cover is no longer a filesystem path you type — drop
+an image (or click to browse) on the Cover zone and it uploads on the
+spot, shows a thumbnail, and is packed as 000_cover.{ext} exactly as
+before. Uploaded covers land in MDF/.mdf_uploads/ and are swept away by
+the existing post-export cleanup; the zone resets itself after each job
+so a stale path is never re-sent.
+
+The interface is rebuilt around the MangaFactory logo's palette — warm
+taupe, burnt orange, navy rule, near-black wordmark. Flat surfaces, thin
+1px framing, sharp corners, no gradients or glows. The log console stays
+dark on purpose: it is the one ink block on the page, and terminal
+output reads best that way.
+
+Also fixed: "Send to CBZ Processor →" threw a TypeError on a
+long-removed #cbz-scan-btn element and never actually scanned.
 
 v1.9: drop-anything CBZ Processor. Every queued file is sniffed by magic
 bytes before processing — a ".cbz" that is really a RAR (.cbr), 7-Zip
@@ -978,108 +996,122 @@ HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MangaFactory v1.9</title>
+<title>MangaFactory v2.0</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #07080c; --surface: #0e1016; --surface2: #161925; --border: #1f2332;
-    --border-hi: #2b3045;
-    --accent: #ff5a2e; --accent2: #ffb066; --accent-soft: rgba(255,90,46,0.10);
-    --text: #eef0f6; --muted: #7e8499;
-    --success: #34d399; --warn: #fbbf24; --danger: #f87171;
+    /* Palette lifted from MangaFactory Logo 0.1 — warm taupe field, burnt
+       orange frame, near-black wordmark, thin navy rule. Flat and light:
+       no gradients, no glows, no coloured shadows anywhere. */
+    --paper: #CDBBB3;        /* logo background taupe — page bg */
+    --paper-2: #C2AFA7;      /* deeper taupe — wells, sticky headers, tracks */
+    --card: #D8C9C2;         /* raised surface */
+    --field: #E6DCD6;        /* input backgrounds */
+    --ink: #16141A;          /* logo text black — primary text */
+    --ink-soft: #4A423E;     /* secondary text */
+    /* Text tokens below are darkened from the build guide's first pass:
+       measured against --paper the guide's values landed at 3.7–4.0:1,
+       under the 4.5:1 AA floor for the 10–12px mono they carry. These
+       clear 4.5:1 on --paper AND on --card. */
+    --muted: #564B45;        /* meta text — 4.56:1 on paper, 5.24:1 on card */
+    --line: #B2A098;         /* hairline borders */
+    --line-strong: #8F7D75;  /* emphasized borders */
+    --accent: #C1440E;       /* logo frame burnt orange — identity, primary */
+    --accent-ink: #8A2F06;   /* small orange text — 4.56:1 on paper */
+    --accent-soft: rgba(193,68,14,0.08);
+    --navy: #22386B;         /* logo rule blue — go-actions, secondary bars */
+    --success: #1E5540; --warn: #553D00; --danger: #8E2A20;
+    --on-accent: #FBF3EE; --on-navy: #F2EFEA;
     --mono: 'JetBrains Mono', monospace; --sans: 'Space Grotesk', sans-serif;
-    --r-lg: 16px; --r-md: 12px; --r-sm: 9px;
+    --r: 2px;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text); font-family: var(--sans); min-height: 100vh; overflow-x: hidden; -webkit-font-smoothing: antialiased; }
-  body::before {
-    content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
-    background:
-      radial-gradient(640px 320px at 12% -4%, rgba(255,90,46,0.07), transparent 70%),
-      radial-gradient(900px 420px at 88% -8%, rgba(94,118,255,0.05), transparent 70%);
-  }
+  body { background: var(--paper); color: var(--ink); font-family: var(--sans); min-height: 100vh; overflow-x: hidden; -webkit-font-smoothing: antialiased; }
   .container { position: relative; z-index: 1; max-width: 900px; margin: 0 auto; padding: 44px 24px 88px; }
 
-  header { display: flex; align-items: center; gap: 16px; margin-bottom: 26px; padding-bottom: 22px; border-bottom: 1px solid var(--border); }
-  .logo-mark { width: 46px; height: 46px; border-radius: 14px; background: linear-gradient(135deg, #ff7c52, #e8441a); display: flex; align-items: center; justify-content: center; font-size: 17px; font-weight: 700; letter-spacing: -0.5px; color: #fff; flex-shrink: 0; box-shadow: 0 6px 18px rgba(255,90,46,0.35), inset 0 1px 0 rgba(255,255,255,0.25); }
-  h1 { font-size: 27px; font-weight: 700; letter-spacing: -0.7px; line-height: 1; }
-  h1 span { color: var(--accent); }
-  .tagline { font-size: 13px; color: var(--muted); margin-top: 4px; letter-spacing: 0.2px; }
-  .version { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-left: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px; }
+  /* Header — a miniature of the logo: framed wordmark, navy rule, mono tag */
+  header { display: flex; align-items: flex-end; gap: 18px; margin-bottom: 30px; padding-bottom: 22px; border-bottom: 1px solid var(--line); }
+  .logo-frame { border: 1.5px solid var(--accent); border-radius: var(--r); padding: 12px 18px 10px; flex-shrink: 0; }
+  .logo-word { font-size: 24px; font-weight: 700; letter-spacing: 1px; color: var(--ink); line-height: 1; }
+  .logo-sub { display: flex; align-items: center; gap: 7px; margin-top: 5px; font-size: 10px; font-weight: 600; letter-spacing: 4px; color: var(--ink); }
+  .logo-rule { width: 1.5px; height: 12px; background: var(--navy); flex-shrink: 0; }
+  .tagline { font-size: 12px; color: var(--muted); letter-spacing: 0.4px; padding-bottom: 3px; }
+  .version { font-family: var(--mono); font-size: 11px; color: var(--ink-soft); margin-left: auto; letter-spacing: 2px; padding-bottom: 3px; }
 
-  /* Tabs — segmented pill */
-  .tabs { display: flex; width: max-content; gap: 4px; margin-bottom: 24px; background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 4px; }
-  .tab { background: transparent; border: none; color: var(--muted); font-family: var(--sans); font-size: 14px; font-weight: 600; letter-spacing: 0.1px; padding: 9px 22px; cursor: pointer; border-radius: 999px; transition: color 0.15s, background 0.15s, box-shadow 0.15s; }
-  .tab:hover { color: var(--text); }
-  .tab.active { color: #fff; background: linear-gradient(135deg, #ff7c52, #e8441a); box-shadow: 0 4px 14px rgba(255,90,46,0.30); }
+  /* Tabs — flat underline */
+  .tabs { display: flex; gap: 26px; margin-bottom: 26px; border-bottom: 1px solid var(--line); }
+  .tab { background: none; border: none; padding: 10px 2px 12px; cursor: pointer; font-family: var(--sans); font-size: 13px; font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; transition: color 0.15s, border-color 0.15s; }
+  .tab:hover { color: var(--ink); }
+  .tab.active { color: var(--ink); border-bottom-color: var(--accent); }
   .tab-content { display: none; }
   .tab-content.active { display: block; animation: fadeIn 0.25s ease-out; }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 
   /* Cards / inputs shared */
-  .card { background: linear-gradient(180deg, rgba(255,255,255,0.025), rgba(255,255,255,0) 60%), var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 24px; margin-bottom: 16px; box-shadow: 0 14px 36px rgba(0,0,0,0.30); }
-  .card-title { font-size: 11px; font-weight: 600; letter-spacing: 1.8px; text-transform: uppercase; color: var(--muted); margin-bottom: 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--r); padding: 22px; margin-bottom: 14px; }
+  .card-title { font-size: 11px; font-weight: 600; letter-spacing: 2.2px; text-transform: uppercase; color: var(--ink); padding-bottom: 10px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
   .input-row { display: flex; gap: 10px; }
-  input[type="text"] { flex: 1; background: var(--bg); border: 1px solid var(--border-hi); border-radius: var(--r-sm); color: var(--text); font-family: var(--mono); font-size: 13px; padding: 12px 16px; outline: none; transition: border-color 0.2s, box-shadow 0.2s; }
-  input[type="text"]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-  input[type="text"]::placeholder { color: var(--muted); opacity: 0.7; }
-  .btn { background: linear-gradient(135deg, #ff7c52, #e8441a); color: #fff; border: none; border-radius: var(--r-sm); font-family: var(--sans); font-size: 14px; font-weight: 600; letter-spacing: 0.2px; padding: 12px 22px; cursor: pointer; transition: filter 0.15s, transform 0.12s, box-shadow 0.15s; white-space: nowrap; box-shadow: 0 4px 14px rgba(255,90,46,0.25); }
-  .btn:hover { filter: brightness(1.08); transform: translateY(-1px); box-shadow: 0 7px 20px rgba(255,90,46,0.35); }
-  .btn:active { transform: translateY(0) scale(0.98); }
-  .btn:disabled { background: var(--surface2); color: var(--muted); cursor: not-allowed; transform: none; box-shadow: none; filter: none; }
-  .btn-ghost { background: transparent; border: 1px solid var(--border-hi); color: var(--text); box-shadow: none; }
-  .btn-ghost:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); filter: none; transform: none; box-shadow: none; }
-  .btn-sm { font-size: 12px; padding: 7px 14px; border-radius: 8px; }
-  .btn-success { background: linear-gradient(135deg, #3ddfa0, #1ca878); box-shadow: 0 4px 14px rgba(52,211,153,0.25); }
-  .btn-success:hover { filter: brightness(1.06); box-shadow: 0 7px 20px rgba(52,211,153,0.32); }
+  input[type="text"] { flex: 1; background: var(--field); border: 1px solid var(--line-strong); border-radius: var(--r); color: var(--ink); font-family: var(--mono); font-size: 13px; padding: 12px 16px; outline: none; transition: border-color 0.15s; }
+  input[type="text"]:focus { border-color: var(--accent); }
+  input[type="text"]::placeholder { color: var(--muted); opacity: 0.75; }
+  .btn { background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--r); font-family: var(--sans); font-size: 14px; font-weight: 600; letter-spacing: 0.2px; padding: 12px 22px; cursor: pointer; transition: background 0.15s, border-color 0.15s, color 0.15s; white-space: nowrap; }
+  /* Every interactive state is :not(:disabled)-qualified. Without it,
+     .btn-success:hover matches .btn:disabled's specificity but is declared
+     later, so hovering a disabled button repainted it navy while the text
+     stayed --muted — about 1.6:1, and it read as clickable. */
+  .btn:not(:disabled):hover { background: #A83A0B; }
+  .btn:not(:disabled):active { background: #93330A; }
+  .btn:disabled { background: var(--paper-2); color: var(--muted); cursor: not-allowed; }
+  .btn-ghost { background: transparent; border: 1px solid var(--line-strong); color: var(--ink); }
+  .btn-ghost:not(:disabled):hover { border-color: var(--accent); color: var(--accent-ink); background: var(--accent-soft); }
+  .btn-sm { font-size: 12px; padding: 7px 14px; }
+  .btn-success { background: var(--navy); color: var(--on-navy); }
+  .btn-success:not(:disabled):hover { background: #1B2D58; }
+  .btn-success:not(:disabled):active { background: #16244A; }
 
   /* MDF-specific styles */
-  #manga-info { display: none; align-items: center; gap: 16px; padding: 18px 22px; background: var(--surface2); border: 1px solid var(--border-hi); border-radius: var(--r-md); margin-bottom: 16px; }
+  #manga-info { display: none; align-items: center; gap: 16px; padding: 18px 22px; background: var(--card); border: 1px solid var(--line-strong); border-left: 3px solid var(--navy); border-radius: var(--r); margin-bottom: 16px; }
   .manga-title-display { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; }
   .manga-meta { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 3px; }
-  .gap-alert { display: none; background: rgba(251,191,36,0.07); border: 1px solid rgba(251,191,36,0.28); border-radius: var(--r-md); padding: 14px 18px; margin-bottom: 16px; font-size: 13px; color: var(--warn); }
+  .gap-alert { display: none; background: rgba(94,68,0,0.08); border: 1px solid rgba(94,68,0,0.35); border-radius: var(--r); padding: 14px 18px; margin-bottom: 16px; font-size: 13px; color: var(--warn); }
   .gap-alert strong { display: block; margin-bottom: 4px; font-size: 11px; letter-spacing: 1.4px; text-transform: uppercase; }
   #chapter-section { display: none; }
   .chapter-controls { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; }
   .chapter-controls .spacer { flex: 1; }
-  .filter-input { background: var(--bg); border: 1px solid var(--border-hi); border-radius: 8px; color: var(--text); font-family: var(--mono); font-size: 12px; padding: 7px 12px; width: 170px; outline: none; transition: border-color 0.2s, box-shadow 0.2s; }
-  .filter-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-  .volume-header { display: flex; align-items: center; gap: 10px; padding: 9px 16px; background: var(--surface2); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 2; user-select: none; cursor: pointer; }
-  .volume-header:hover { background: #1b1f2e; }
-  .vol-label { font-family: var(--mono); font-size: 10px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--accent2); }
-  .vol-cbz-badge { font-family: var(--mono); font-size: 9px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); border: 1px solid var(--border-hi); padding: 2px 8px; border-radius: 999px; }
-  .vol-meta { font-family: var(--mono); font-size: 10px; color: var(--muted); margin-left: auto; }
-  .chapter-list { max-height: 420px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--r-md); }
+  .filter-input { background: var(--field); border: 1px solid var(--line-strong); border-radius: var(--r); color: var(--ink); font-family: var(--mono); font-size: 12px; padding: 7px 12px; width: 170px; outline: none; transition: border-color 0.15s; }
+  .filter-input:focus { border-color: var(--accent); }
+  .volume-header { display: flex; align-items: center; gap: 10px; padding: 9px 16px; background: var(--paper-2); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 2; user-select: none; cursor: pointer; }
+  .volume-header:hover { background: #B7A49C; }
+  .vol-label { font-family: var(--mono); font-size: 10px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--navy); }
+  .vol-cbz-badge { font-family: var(--mono); font-size: 9px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); border: 1px solid var(--line-strong); padding: 2px 8px; border-radius: var(--r); }
+  /* --ink-soft, not --muted: this sits on --paper-2, which is dark enough
+     that --muted lands at 4.0:1 — under the AA floor for 10px text. */
+  .vol-meta { font-family: var(--mono); font-size: 10px; color: var(--ink-soft); margin-left: auto; }
+  .chapter-list { max-height: 420px; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--r); background: var(--field); }
   .chapter-list::-webkit-scrollbar { width: 8px; }
   .chapter-list::-webkit-scrollbar-track { background: transparent; }
-  .chapter-list::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 99px; border: 2px solid var(--surface); }
-  .chapter-row { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.1s; user-select: none; }
+  .chapter-list::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: var(--r); border: 2px solid var(--field); }
+  .chapter-row { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); cursor: pointer; transition: background 0.1s; user-select: none; }
   .chapter-row:last-child { border-bottom: none; }
-  .chapter-row:hover { background: var(--surface2); }
+  .chapter-row:hover { background: #DCCFC8; }
   .chapter-row.selected { background: var(--accent-soft); }
   .chapter-row input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; flex-shrink: 0; }
-  .ch-num { font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--accent); width: 60px; flex-shrink: 0; }
-  .ch-title { font-size: 13px; flex: 1; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ch-num { font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--accent-ink); width: 60px; flex-shrink: 0; }
+  .ch-title { font-size: 13px; flex: 1; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ch-pages { font-family: var(--mono); font-size: 11px; color: var(--muted); flex-shrink: 0; }
-  .ch-status { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--border-hi); }
-  .ch-status.done { background: var(--success); box-shadow: 0 0 8px rgba(52,211,153,0.5); }
+  .ch-status { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--line-strong); }
+  .ch-status.done { background: var(--success); }
   .ch-status.error { background: var(--danger); }
   .ch-status.downloading { background: var(--warn); animation: pulse 1s infinite; }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
   #volume-summary { display: none; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
-  .vol-pill { background: var(--surface); border: 1px solid var(--border-hi); border-radius: 999px; padding: 6px 14px; font-family: var(--mono); font-size: 11px; color: var(--muted); }
-  .vol-pill strong { color: var(--accent2); }
-  .cbz-toggle-row { display: flex; align-items: center; gap: 12px; padding: 14px 0 16px; border-top: 1px solid var(--border); margin-top: 4px; }
-  .toggle-wrap { position: relative; width: 42px; height: 24px; flex-shrink: 0; }
-  .toggle-wrap input { opacity: 0; width: 0; height: 0; }
-  .toggle-slider { position: absolute; inset: 0; background: var(--border-hi); border-radius: 99px; cursor: pointer; transition: background 0.2s; }
-  .toggle-slider::before { content: ''; position: absolute; width: 18px; height: 18px; left: 3px; top: 3px; background: var(--muted); border-radius: 50%; transition: transform 0.2s, background 0.2s; }
-  .toggle-wrap input:checked + .toggle-slider { background: var(--accent); }
-  .toggle-wrap input:checked + .toggle-slider::before { transform: translateX(18px); background: #fff; }
+  .vol-pill { background: var(--card); border: 1px solid var(--line-strong); border-radius: var(--r); padding: 6px 14px; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .vol-pill strong { color: var(--accent-ink); }
+  .cbz-toggle-row { display: flex; align-items: center; gap: 12px; padding: 14px 0 16px; border-top: 1px solid var(--line); margin-top: 4px; }
   .cbz-label { font-size: 13px; font-weight: 600; }
   .cbz-sublabel { font-family: var(--mono); font-size: 11px; color: var(--muted); line-height: 1.6; }
-  .cbz-progress-section { display: none; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+  .cbz-progress-section { display: none; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
   .cbz-vol-list { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
   .cbz-vol-row { display: flex; align-items: center; gap: 10px; font-family: var(--mono); font-size: 11px; color: var(--muted); }
   .cbz-vol-icon { width: 14px; text-align: center; }
@@ -1091,19 +1123,21 @@ HTML = r"""<!DOCTYPE html>
   #progress-section { display: none; }
   .overall-progress { margin-bottom: 18px; }
   .progress-label { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 11px; color: var(--muted); margin-bottom: 7px; }
-  .progress-bar-wrap { background: var(--surface2); height: 8px; border-radius: 99px; overflow: hidden; }
-  .progress-bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); border-radius: 99px; transition: width 0.3s ease; width: 0%; }
-  .current-chapter-info { font-family: var(--mono); font-size: 12px; color: var(--accent2); margin-bottom: 12px; }
-  .log-box { background: #05060a; border: 1px solid var(--border); border-radius: var(--r-md); font-family: var(--mono); font-size: 11px; color: var(--muted); padding: 14px 16px; max-height: 160px; overflow-y: auto; line-height: 1.8; }
+  .progress-bar-wrap { background: var(--paper-2); height: 8px; border-radius: var(--r); overflow: hidden; border: 1px solid var(--line); }
+  .progress-bar-fill { height: 100%; background: var(--accent); transition: width 0.3s ease; width: 0%; }
+  .current-chapter-info { font-family: var(--mono); font-size: 12px; color: var(--accent-ink); margin-bottom: 12px; }
+  /* The one dark element by design — an ink block anchoring each card.
+     Terminal output reads best dark, and it echoes the logo's black. */
+  .log-box { background: var(--ink); border: 1px solid var(--ink); border-radius: var(--r); font-family: var(--mono); font-size: 11px; color: #C9BDB6; padding: 14px 16px; max-height: 160px; overflow-y: auto; line-height: 1.8; }
   .log-box::-webkit-scrollbar { width: 6px; }
-  .log-box::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 99px; }
+  .log-box::-webkit-scrollbar-thumb { background: #4A423E; border-radius: var(--r); }
   .log-line { display: block; }
-  .log-line.ok { color: var(--success); }
-  .log-line.err { color: var(--danger); }
-  .log-line.info { color: var(--accent2); }
-  .log-line.skip { color: var(--muted); }
-  .log-line.warn { color: var(--warn); }
-  .done-banner { display: none; background: rgba(52,211,153,0.08); border: 1px solid rgba(52,211,153,0.30); border-radius: var(--r-md); padding: 16px 20px; margin-top: 16px; font-weight: 600; color: var(--success); font-size: 14px; letter-spacing: 0.2px; }
+  .log-line.ok { color: #8CC9A9; }
+  .log-line.err { color: #E58A7C; }
+  .log-line.info { color: #E8956B; }
+  .log-line.skip { color: #8A8280; }
+  .log-line.warn { color: #D9B36A; }
+  .done-banner { display: none; background: rgba(30,85,64,0.10); border: 1px solid rgba(30,85,64,0.40); border-radius: var(--r); padding: 16px 20px; margin-top: 16px; font-weight: 600; color: var(--success); font-size: 14px; letter-spacing: 0.2px; }
   .done-actions { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
   #loading-spinner, #cbz-loading-spinner { display: none; font-family: var(--mono); font-size: 12px; color: var(--muted); margin-top: 10px; }
   .spinner { display: inline-block; animation: spin 1s linear infinite; margin-right: 6px; color: var(--accent); }
@@ -1112,57 +1146,73 @@ HTML = r"""<!DOCTYPE html>
 
   /* CBZ Processor tab */
   #cbz-file-list { display: flex; flex-direction: column; gap: 8px; }
-  .cbz-file-row { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--r-md); transition: border-color 0.2s; }
+  .cbz-file-row { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: var(--field); border: 1px solid var(--line); border-radius: var(--r); transition: border-color 0.2s; }
   .cbz-file-row.status-active { border-color: var(--accent); }
-  .cbz-file-row.status-done   { border-color: rgba(52,211,153,0.45); }
-  .cbz-file-row.status-error  { border-color: rgba(248,113,113,0.5); }
-  .cbz-file-icon { width: 34px; height: 34px; border-radius: 10px; background: var(--accent-soft); border: 1px solid rgba(255,90,46,0.30); color: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; }
+  .cbz-file-row.status-done   { border-color: rgba(30,85,64,0.55); }
+  .cbz-file-row.status-error  { border-color: rgba(142,42,32,0.55); }
+  .cbz-file-icon { width: 34px; height: 34px; border-radius: var(--r); background: none; border: 1px solid var(--accent); color: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; }
   .cbz-file-details { flex: 1; min-width: 0; }
-  .cbz-file-name { font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cbz-file-name { font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .cbz-file-meta { font-family: var(--mono); font-size: 10px; color: var(--muted); margin-top: 2px; }
   .cbz-chapter-wrap { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
-  .cbz-badge { font-family: var(--mono); font-size: 9px; padding: 3px 9px; font-weight: 700; letter-spacing: 0.5px; border: 1px solid; border-radius: 999px; }
-  .cbz-badge.auto   { background: rgba(52,211,153,0.10); color: var(--success); border-color: rgba(52,211,153,0.35); }
-  .cbz-badge.manual { background: rgba(251,191,36,0.10); color: var(--warn);    border-color: rgba(251,191,36,0.35); }
-  .cbz-chapter-input-group { display: flex; align-items: stretch; border: 1px solid var(--border-hi); border-radius: 8px; overflow: hidden; background: var(--bg); transition: border-color 0.2s, box-shadow 0.2s; }
-  .cbz-chapter-input-group:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-  .cbz-chapter-prefix { font-family: var(--mono); font-size: 11px; color: var(--muted); padding: 6px 8px; border-right: 1px solid var(--border); background: var(--surface); display: flex; align-items: center; }
-  .cbz-chapter-input { border: none; background: transparent; color: var(--text); font-family: var(--mono); font-size: 12px; font-weight: 600; padding: 6px 8px; width: 80px; outline: none; }
-  .cbz-file-remove { background: transparent; border: none; color: var(--muted); cursor: pointer; font-size: 14px; padding: 4px 8px; border-radius: 6px; flex-shrink: 0; transition: color 0.15s, background 0.15s; }
-  .cbz-file-remove:hover { color: var(--danger); background: rgba(248,113,113,0.10); }
-  .cbz-status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--border-hi); }
+  .cbz-badge { font-family: var(--mono); font-size: 9px; padding: 3px 9px; font-weight: 700; letter-spacing: 0.5px; border: 1px solid; border-radius: var(--r); }
+  .cbz-badge.auto   { background: rgba(30,85,64,0.12); color: var(--success); border-color: rgba(30,85,64,0.40); }
+  .cbz-badge.manual { background: rgba(94,68,0,0.12);  color: var(--warn);    border-color: rgba(94,68,0,0.40); }
+  .cbz-chapter-input-group { display: flex; align-items: stretch; border: 1px solid var(--line-strong); border-radius: var(--r); overflow: hidden; background: var(--field); transition: border-color 0.15s; }
+  .cbz-chapter-input-group:focus-within { border-color: var(--accent); }
+  .cbz-chapter-prefix { font-family: var(--mono); font-size: 11px; color: var(--ink-soft); padding: 6px 8px; border-right: 1px solid var(--line); background: var(--paper-2); display: flex; align-items: center; }
+  .cbz-chapter-input { border: none; background: transparent; color: var(--ink); font-family: var(--mono); font-size: 12px; font-weight: 600; padding: 6px 8px; width: 80px; outline: none; }
+  .cbz-file-remove { background: transparent; border: none; color: var(--muted); cursor: pointer; font-size: 14px; padding: 4px 8px; border-radius: var(--r); flex-shrink: 0; transition: color 0.15s, background 0.15s; }
+  .cbz-file-remove:hover { color: var(--danger); background: rgba(142,42,32,0.10); }
+  .cbz-status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--line-strong); }
   .cbz-status-dot.active { background: var(--warn); animation: pulse 1s infinite; }
   .cbz-status-dot.done { background: var(--success); }
   .cbz-status-dot.error { background: var(--danger); }
-  .cbz-settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  /* min-width:0 on the tracks: a grid item defaults to min-width:auto, so a
+     long cover filename would push its column past the card edge (taking the
+     ✕ button off-screen) instead of letting the name ellipsize. */
+  .cbz-settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+  .cbz-settings-grid > * { min-width: 0; }
   @media (max-width: 640px) { .cbz-settings-grid { grid-template-columns: 1fr; } }
   .cbz-field-label { font-family: var(--mono); font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; display: block; }
   .cbz-field-hint { font-family: var(--mono); font-size: 10px; color: var(--muted); margin-top: 6px; }
   .cbz-mode-row { display: flex; gap: 8px; margin-top: 10px; }
-  .cbz-mode-btn { flex: 1; background: var(--bg); border: 1px solid var(--border-hi); border-radius: var(--r-sm); color: var(--muted); font-family: var(--sans); font-size: 13px; font-weight: 600; padding: 11px 10px; cursor: pointer; transition: all 0.15s; }
-  .cbz-mode-btn:hover { color: var(--text); border-color: var(--accent2); }
-  .cbz-mode-btn.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
-  .empty-state { padding: 32px; text-align: center; color: var(--muted); font-family: var(--mono); font-size: 12px; border: 1px dashed var(--border-hi); border-radius: var(--r-md); }
+  .cbz-mode-btn { flex: 1; background: var(--field); border: 1px solid var(--line-strong); border-radius: var(--r); color: var(--ink-soft); font-family: var(--sans); font-size: 13px; font-weight: 600; padding: 11px 10px; cursor: pointer; transition: background 0.15s, border-color 0.15s, color 0.15s; }
+  .cbz-mode-btn:hover { color: var(--ink); border-color: var(--accent); }
+  .cbz-mode-btn.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-ink); }
+  .empty-state { padding: 32px; text-align: center; color: var(--muted); font-family: var(--mono); font-size: 12px; border: 1px dashed var(--line-strong); border-radius: var(--r); }
 
   /* Drag & drop zone */
-  .drop-zone { border: 1.5px dashed var(--border-hi); border-radius: var(--r-md); padding: 34px 24px; text-align: center; cursor: default; transition: border-color 0.2s, background 0.2s; }
+  .drop-zone { border: 1.5px dashed var(--line-strong); border-radius: var(--r); padding: 34px 24px; text-align: center; cursor: default; transition: border-color 0.15s, background 0.15s; }
   .drop-zone:hover { border-color: var(--accent); background: var(--accent-soft); }
   .drop-zone.drag-over { border-color: var(--accent); background: var(--accent-soft); }
-  .drop-zone-icon { width: 46px; height: 46px; margin: 0 auto 12px; border-radius: 14px; background: var(--accent-soft); border: 1px solid rgba(255,90,46,0.30); color: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 20px; }
-  .drop-zone-label { font-size: 15px; font-weight: 600; color: var(--text); margin-bottom: 5px; }
+  .drop-zone-icon { width: 46px; height: 46px; margin: 0 auto 12px; border-radius: var(--r); background: none; border: 1px solid var(--accent); color: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 20px; }
+  .drop-zone-label { font-size: 15px; font-weight: 600; color: var(--ink); margin-bottom: 5px; }
   .drop-zone-hint { font-family: var(--mono); font-size: 11px; color: var(--muted); }
-  .upload-status { font-family: var(--mono); font-size: 11px; color: var(--accent2); margin-top: 10px; min-height: 1em; }
+  .upload-status { font-family: var(--mono); font-size: 11px; color: var(--accent-ink); margin-top: 10px; min-height: 1em; }
+
+  /* Cover drop zone (v2.0) — same language as .drop-zone, sized for a
+     thumbnail preview once an image has been accepted. */
+  .cover-drop { border: 1.5px dashed var(--line-strong); border-radius: var(--r); min-height: 96px; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+  .cover-drop:hover, .cover-drop.drag-over { border-color: var(--accent); background: var(--accent-soft); }
+  .cover-drop-empty { text-align: center; color: var(--muted); font-family: var(--mono); font-size: 11px; padding: 14px; line-height: 1.6; }
+  .cover-drop-icon { font-size: 18px; color: var(--accent); margin-bottom: 6px; }
+  .cover-preview { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 12px; }
+  .cover-preview img { width: 48px; height: 64px; object-fit: cover; border: 1px solid var(--line-strong); border-radius: var(--r); flex-shrink: 0; background: var(--paper-2); }
+  .cover-preview-meta { flex: 1; min-width: 0; }
+  .cover-preview-name { font-family: var(--mono); font-size: 12px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cover-preview-size { font-family: var(--mono); font-size: 10px; color: var(--muted); margin-top: 2px; }
 </style>
 </head>
 <body>
 <div class="container">
   <header>
-    <div class="logo-mark">MF</div>
-    <div>
-      <h1>Manga<span>Factory</span></h1>
-      <div class="tagline">Download · Process · Package</div>
+    <div class="logo-frame">
+      <div class="logo-word">MANGA</div>
+      <div class="logo-sub"><span class="logo-rule"></span>FACTORY</div>
     </div>
-    <div class="version">v1.9</div>
+    <div class="tagline">Download · Process · Package</div>
+    <div class="version">V2.0</div>
   </header>
 
   <div class="tabs">
@@ -1184,18 +1234,18 @@ HTML = r"""<!DOCTYPE html>
 
     <div class="card">
       <div class="card-title">Comix.to · Browser Grab</div>
-      <div style="font-size:13px; color:var(--text); line-height:1.6; margin-bottom:14px;">
+      <div style="font-size:13px; color:var(--ink); line-height:1.6; margin-bottom:14px;">
         comix.to encrypts its API, so MangaFactory can't fetch it server-side. Instead, pages are grabbed
         straight from your own logged-in browser. Drag the button to your bookmarks bar once, open any
         comix.to chapter, then click it — it packages every page into a
-        <code style="color:var(--accent)">.cbz</code> and downloads it. Drop that file into the
+        <code style="color:var(--accent-ink)">.cbz</code> and downloads it. Drop that file into the
         <b>CBZ Processor</b> tab to rename pages and finish the volume.
       </div>
       <div style="display:flex; flex-wrap:wrap; gap:8px 16px; font-family:var(--mono); font-size:11px; color:var(--muted); margin-bottom:14px;">
-        <span><b style="color:var(--accent2)">1.</b> Drag → bookmarks bar</span>
-        <span><b style="color:var(--accent2)">2.</b> Open a comix.to chapter</span>
-        <span><b style="color:var(--accent2)">3.</b> Click the bookmark</span>
-        <span><b style="color:var(--accent2)">4.</b> Drop the .cbz into CBZ Processor</span>
+        <span><b style="color:var(--accent-ink)">1.</b> Drag → bookmarks bar</span>
+        <span><b style="color:var(--accent-ink)">2.</b> Open a comix.to chapter</span>
+        <span><b style="color:var(--accent-ink)">3.</b> Click the bookmark</span>
+        <span><b style="color:var(--accent-ink)">4.</b> Drop the .cbz into CBZ Processor</span>
       </div>
       <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
         <a id="comix-bm" class="btn" href="#" draggable="true" style="text-decoration:none;">Comix → CBZ</a>
@@ -1212,9 +1262,9 @@ HTML = r"""<!DOCTYPE html>
     <script type="text/plain" id="comix-src">(async () => {
   let box = document.getElementById('mf-grab'); if (box) box.remove();
   box = document.createElement('div'); box.id = 'mf-grab';
-  box.style.cssText = 'position:fixed;top:12px;right:12px;z-index:2147483647;background:#0e1016;color:#eef0f6;font:13px/1.5 ui-monospace,monospace;padding:14px 16px;border:1px solid #ff5a2e;border-radius:12px;max-width:320px;box-shadow:0 6px 24px rgba(0,0,0,.5)';
+  box.style.cssText = 'position:fixed;top:12px;right:12px;z-index:2147483647;background:#0e1016;color:#eef0f6;font:13px/1.5 ui-monospace,monospace;padding:14px 16px;border:1px solid #C1440E;border-radius:2px;max-width:320px;box-shadow:0 6px 24px rgba(0,0,0,.5)';
   document.body.appendChild(box);
-  const log = m => { box.innerHTML = '<b style="color:#ff5a2e">MangaFactory · Comix grab</b><br>' + m; };
+  const log = m => { box.innerHTML = '<b style="color:#E8956B">MangaFactory · Comix grab</b><br>' + m; };
   log('Starting…');
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const readerImg = [...document.querySelectorAll('img')].map(i => i.currentSrc || i.src).find(s => /\/i4\//.test(s));
@@ -1343,7 +1393,7 @@ HTML = r"""<!DOCTYPE html>
         <div class="overall-progress">
           <div class="progress-label"><span>Chapters</span><span id="ch-progress-text">0 / 0</span></div>
           <div class="progress-bar-wrap">
-            <div class="progress-bar-fill" id="ch-bar" style="background: linear-gradient(90deg, var(--success), #6ee7b7);"></div>
+            <div class="progress-bar-fill" id="ch-bar" style="background: var(--navy);"></div>
           </div>
         </div>
         <div class="log-box" id="log-box"></div>
@@ -1398,14 +1448,27 @@ HTML = r"""<!DOCTYPE html>
             <div class="input-row">
               <input type="text" id="cbz-volume-input" placeholder="e.g. 03" />
             </div>
-            <div class="cbz-field-hint">Folder/CBZ named: <span id="cbz-volume-preview" style="color:var(--accent2)">New Volume</span></div>
+            <div class="cbz-field-hint">Folder/CBZ named: <span id="cbz-volume-preview" style="color:var(--accent-ink)">New Volume</span></div>
           </div>
           <div>
-            <label class="cbz-field-label">Cover Image Path (optional)</label>
-            <div class="input-row">
-              <input type="text" id="cbz-cover-input" placeholder="~/Pictures/cover.jpg" />
+            <label class="cbz-field-label">Cover Image (optional)</label>
+            <div class="cover-drop" id="cbz-cover-drop">
+              <div class="cover-drop-empty" id="cbz-cover-empty">
+                <div class="cover-drop-icon">▦</div>
+                <div class="cover-drop-text">Drop a cover image<br><span>or click to browse</span></div>
+              </div>
+              <div class="cover-preview" id="cbz-cover-preview" style="display:none">
+                <img id="cbz-cover-thumb" alt="Cover preview">
+                <div class="cover-preview-meta">
+                  <div class="cover-preview-name" id="cbz-cover-name"></div>
+                  <div class="cover-preview-size" id="cbz-cover-size"></div>
+                </div>
+                <button class="cbz-file-remove" id="cbz-cover-remove" title="Remove cover">✕</button>
+              </div>
             </div>
-            <div class="cbz-field-hint">Saved as <code style="color:var(--accent)">000_cover.{ext}</code> — always first.</div>
+            <input type="file" id="cbz-cover-picker" accept=".jpg,.jpeg,.png,.gif,.webp,.bmp" style="display:none" />
+            <div class="cbz-field-hint">Saved as <code style="color:var(--accent-ink)">000_cover.{ext}</code> — always first.
+              <span id="cbz-cover-status"></span></div>
           </div>
         </div>
       </div>
@@ -1438,7 +1501,7 @@ HTML = r"""<!DOCTYPE html>
         <div class="overall-progress">
           <div class="progress-label"><span>Files</span><span id="cbz-file-progress-text">0 / 0</span></div>
           <div class="progress-bar-wrap">
-            <div class="progress-bar-fill" id="cbz-file-bar" style="background: linear-gradient(90deg, var(--success), #6ee7b7);"></div>
+            <div class="progress-bar-fill" id="cbz-file-bar" style="background: var(--navy);"></div>
           </div>
         </div>
         <div class="log-box" id="cbz-log-box"></div>
@@ -1689,7 +1752,11 @@ function cbzFormatSize(bytes) {
 async function cbzScan() {
   const folder = document.getElementById('cbz-source-input').value.trim();
   if (!folder) { alert('Enter a folder path.'); return; }
-  document.getElementById('cbz-scan-btn').disabled = true;
+  // v2.0 fix: #cbz-scan-btn has not existed since the folder-scan UI was
+  // replaced by the drop zone, so these lines threw a TypeError and killed
+  // the "Send to CBZ Processor →" handoff before it could scan anything.
+  const scanBtn = document.getElementById('cbz-scan-btn');
+  if (scanBtn) scanBtn.disabled = true;
   document.getElementById('cbz-loading-spinner').style.display = 'block';
   try {
     const res = await fetch('/api/cbz/scan', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({folder}) });
@@ -1701,7 +1768,7 @@ async function cbzScan() {
   } catch (e) {
     alert('Failed: ' + e.message);
   } finally {
-    document.getElementById('cbz-scan-btn').disabled = false;
+    if (scanBtn) scanBtn.disabled = false;
     document.getElementById('cbz-loading-spinner').style.display = 'none';
   }
 }
@@ -1813,7 +1880,9 @@ async function cbzStart() {
     if (!item.chapter.trim()) { alert(`Missing chapter number for:\n${item.name}`); return; }
   }
   const volume   = document.getElementById('cbz-volume-input').value.trim();
-  const cover    = document.getElementById('cbz-cover-input').value.trim();
+  // v2.0: the cover is uploaded on drop and lives server-side in
+  // MDF/.mdf_uploads/; cbzCoverPath holds the path the endpoint returned.
+  const cover    = cbzCoverPath;
   const outDir   = document.getElementById('cbz-output-dir').value.trim();
   if (!outDir) { alert('Specify an output folder.'); return; }
 
@@ -1884,6 +1953,15 @@ async function cbzStart() {
       document.getElementById('cbz-current-info').textContent = 'Complete!';
       document.getElementById('cbz-cancel-btn').textContent = 'Done';
       document.getElementById('cbz-process-btn').disabled = false;
+      // v2.0: a *successful* export wiped MDF/.mdf_uploads/, taking the
+      // uploaded cover with it — so the stored path is now dangling and the
+      // zone has to reset. The worker also emits all_done from its fatal
+      // handler, and that path does NOT clean up: the cover is still on disk
+      // and still usable, so keep it and let the user just fix the output
+      // folder and retry. msg.output_path is empty exactly on that path.
+      if (cbzCoverPath && msg.output_path) {
+        cbzClearCover('Cover was used and cleared — drop a new one for the next job.');
+      }
     }
   };
 }
@@ -1912,10 +1990,112 @@ function cbzLog(msg, cls = '') {
 
 async function cbzCancel() {
   if (cbzEventSource) cbzEventSource.close();
+  const wasRunning = !!cbzSessionId;
   if (cbzSessionId) { await fetch(`/api/cbz/cancel/${cbzSessionId}`, {method: 'POST'}); cbzSessionId = null; }
   document.getElementById('cbz-process-btn').disabled = false;
   document.getElementById('cbz-cancel-btn').textContent = 'Cancel';
+  // A cancelled run still falls through to _cleanup_uploads() server-side, so
+  // the uploaded cover is deleted — but the EventSource is closed above, so
+  // the all_done that would normally reset the zone never arrives. Without
+  // this the thumbnail stays on screen and the next export would post a path
+  // that no longer exists, silently producing a CBZ with no cover.
+  if (wasRunning && cbzCoverPath) {
+    cbzClearCover('Cancelled — the uploaded cover was cleared too. Drop it again to retry.');
+  }
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Cover image drag & drop (v2.0 — replaces the old path text field)
+
+   The image is uploaded the moment it is dropped and kept in
+   MDF/.mdf_uploads/; cbzCoverPath holds the server-side path, which is
+   posted as `cover_path` exactly like the typed path used to be, so
+   cbz_process_worker is untouched.
+   ───────────────────────────────────────────────────────────────────────── */
+let cbzCoverPath = '';    // server-side path returned by /api/cbz/upload-cover
+let cbzCoverUrl = null;   // object URL backing the thumbnail
+
+function cbzClearCover(statusMsg) {
+  cbzCoverPath = '';
+  if (cbzCoverUrl) { URL.revokeObjectURL(cbzCoverUrl); cbzCoverUrl = null; }
+  const thumb = document.getElementById('cbz-cover-thumb');
+  if (thumb) thumb.removeAttribute('src');
+  document.getElementById('cbz-cover-preview').style.display = 'none';
+  document.getElementById('cbz-cover-empty').style.display = '';
+  document.getElementById('cbz-cover-status').textContent = statusMsg || '';
+}
+
+(function () {
+  const zone = document.getElementById('cbz-cover-drop');
+  const picker = document.getElementById('cbz-cover-picker');
+  const statusEl = document.getElementById('cbz-cover-status');
+  const IMG_RE = /\.(jpe?g|png|gif|webp|bmp)$/i;
+  let dragCounter = 0;
+
+  async function uploadCover(file) {
+    if (!file) return;
+    if (!IMG_RE.test(file.name)) {
+      statusEl.textContent = `✗ ${file.name} is not an image.`;
+      return;
+    }
+    statusEl.textContent = `Uploading ${file.name}...`;
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch('/api/cbz/upload-cover', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (data.error) { statusEl.textContent = `✗ ${data.error}`; return; }
+      cbzCoverPath = data.path;
+      if (cbzCoverUrl) URL.revokeObjectURL(cbzCoverUrl);
+      cbzCoverUrl = URL.createObjectURL(file);
+      document.getElementById('cbz-cover-thumb').src = cbzCoverUrl;
+      document.getElementById('cbz-cover-name').textContent = data.name;
+      document.getElementById('cbz-cover-size').textContent = cbzFormatSize(data.size);
+      document.getElementById('cbz-cover-empty').style.display = 'none';
+      document.getElementById('cbz-cover-preview').style.display = 'flex';
+      statusEl.textContent = '';
+    } catch (err) {
+      statusEl.textContent = `✗ Upload failed: ${err.message}`;
+    }
+  }
+
+  zone.addEventListener('click', () => picker.click());
+  picker.addEventListener('change', () => {
+    const f = picker.files[0];
+    picker.value = '';   // reset so the same file can be re-picked later
+    uploadCover(f);
+  });
+
+  zone.addEventListener('dragenter', e => { e.preventDefault(); dragCounter++; zone.classList.add('drag-over'); });
+  zone.addEventListener('dragover', e => { e.preventDefault(); });
+  zone.addEventListener('dragleave', () => {
+    dragCounter--;
+    if (dragCounter <= 0) { dragCounter = 0; zone.classList.remove('drag-over'); }
+  });
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    e.stopPropagation();       // never let a cover reach the file queue
+    dragCounter = 0;
+    zone.classList.remove('drag-over');
+    const files = [...e.dataTransfer.files];
+    uploadCover(files.find(f => IMG_RE.test(f.name)) || files[0]);
+  });
+  document.getElementById('cbz-cover-remove').addEventListener('click', e => {
+    e.stopPropagation();       // don't re-open the picker behind the ✕
+    cbzClearCover();
+  });
+})();
+
+/* A file dropped anywhere outside a drop zone would otherwise make the
+   browser navigate away from the app and lose the queue. Scoped to drags
+   that actually carry files — cancelling every drop would also block
+   dragging selected text into the URL and Output Folder fields, which
+   worked in v1.9. */
+function mfDragCarriesFiles(e) {
+  return !!e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files');
+}
+window.addEventListener('dragover', e => { if (mfDragCarriesFiles(e)) e.preventDefault(); });
+window.addEventListener('drop', e => { if (mfDragCarriesFiles(e)) e.preventDefault(); });
 
 /* ─────────────────────────────────────────────────────────────────────────
    Drag & drop / click-to-browse support for CBZ Processor
@@ -2269,6 +2449,30 @@ def api_cbz_upload_images():
         "detected_chapter": "",
     })
 
+@app.route("/api/cbz/upload-cover", methods=["POST"])
+def api_cbz_upload_cover():
+    """v2.0: receive a cover image dropped on the Cover zone.
+
+    Saved into CBZ_UPLOAD_DIR so the post-export cleanup disposes of it
+    along with the rest of the scratch space. The returned path is handed
+    straight back as `cover_path` on /api/cbz/process, which means
+    cbz_process_worker needs no changes at all — it already accepts any
+    server-side path.
+    """
+    if 'file' not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+    f = request.files['file']
+    orig_name = f.filename or ""
+    ext = orig_name.rsplit('.', 1)[-1].lower() if '.' in orig_name else ''
+    if ext not in IMAGE_EXTS:
+        return jsonify({"error": "Cover must be an image "
+                                 "(jpg, jpeg, png, gif, webp, bmp)"}), 400
+    os.makedirs(CBZ_UPLOAD_DIR, exist_ok=True)
+    dest = os.path.join(CBZ_UPLOAD_DIR, f"cover_{int(time.time() * 1000)}.{ext}")
+    f.save(dest)
+    return jsonify({"path": dest, "name": os.path.basename(orig_name),
+                    "size": os.path.getsize(dest)})
+
 @app.route("/api/cbz/upload-zip", methods=["POST"])
 def api_cbz_upload_zip():
     """v1.7: accept a generic .zip in the CBZ Processor.
@@ -2445,7 +2649,7 @@ if __name__ == "__main__":
     # Ensure the default base + Downloaded/ + exported/ subdirs exist
     # so the very first run has a clean folder layout to start from.
     resolve_io_dirs(DOWNLOAD_BASE)
-    print("\n  MangaFactory v1.9")
+    print("\n  MangaFactory v2.0")
     print(f"  Base folder: {DOWNLOAD_BASE}")
     print(f"    ├─ {DOWNLOAD_SUBDIR}/   (raw downloads)")
     print(f"    ├─ {EXPORT_SUBDIR}/   (packaged CBZs)")
@@ -2453,11 +2657,15 @@ if __name__ == "__main__":
     print(f"  Opening http://localhost:{PORT} in your browser...")
     print("  Press Ctrl+C to quit\n")
 
-    def _open_browser():
-        time.sleep(1.2)
-        webbrowser.open("http://localhost:" + str(PORT))
+    # v2.0: --no-browser matches the sibling single-file apps (YT-DLP GUI,
+    # Unlimited-OCR GUI) so the server can be launched by a harness without
+    # a browser window being thrown at whoever is at the keyboard.
+    if "--no-browser" not in sys.argv:
+        def _open_browser():
+            time.sleep(1.2)
+            webbrowser.open("http://localhost:" + str(PORT))
 
-    threading.Thread(target=_open_browser, daemon=True).start()
+        threading.Thread(target=_open_browser, daemon=True).start()
 
     import logging
     log = logging.getLogger("werkzeug")
