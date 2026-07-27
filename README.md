@@ -1,12 +1,34 @@
-# MangaFactory v1.9
+# MangaFactory v2.0
 
 A single-file Python app with a browser UI for downloading manga and packaging it into CBZ files. No pip install, no virtual environment — just run the script.
 
 ```bash
-python "MangaFactory 1.9.py"
+python "MangaFactory 2.0.py"
 ```
 
-Opens `http://localhost:5000` automatically. Press `Ctrl+C` to quit.
+Opens `http://localhost:5000` automatically. Press `Ctrl+C` to quit. Pass `--no-browser` to start the server without opening a browser window.
+
+---
+
+## What's new in v2.0
+
+**Drag-and-drop cover image.** The cover is no longer a filesystem path you type. The CBZ Processor's *Volume & Cover* card now has a drop zone:
+
+- Drop an image on it, or click to browse. It uploads immediately and shows a thumbnail with the filename and size.
+- The ✕ button clears it; dropping a new image replaces the old one.
+- It is packed as `000_cover.{ext}`, first in the archive, exactly as before — the packaging logic is unchanged.
+- Uploaded covers live in `MDF/.mdf_uploads/` and are swept away by the same post-export cleanup that handles everything else in the scratch space. Because that cleanup runs on export, the zone resets itself when a job finishes rather than leaving a path that no longer points at a file.
+- Non-images are rejected inline with a message instead of silently failing at process time.
+
+**Redesigned interface.** The UI is rebuilt around the palette of the MangaFactory logo — warm taupe field, burnt-orange frame, thin navy rule, near-black wordmark:
+
+- Flat surfaces throughout. No gradients, no glows, no coloured shadows.
+- Structure comes from 1px lines and sharp 2px corners rather than large rounded cards and pills.
+- The header is a miniature of the logo itself; tabs are flat underlines; primary actions are burnt orange and "go" actions (Download Selected, Process Files) are navy.
+- The log console stays dark on purpose — it is the one ink block on the page, and terminal output reads best that way.
+- Meta-text colours were darkened past the first-pass values so every label clears the WCAG AA 4.5:1 floor against both the page and card backgrounds.
+
+**Fixed.** *Send to CBZ Processor →* threw a `TypeError` on `#cbz-scan-btn`, an element removed several versions ago when the folder-scan UI became a drop zone. The handoff silently did nothing; it now scans the folder as intended.
 
 ---
 
@@ -21,7 +43,7 @@ Opens `http://localhost:5000` automatically. Press `Ctrl+C` to quit.
 - **Conversion is visible.** The upload status and each file's row note what was converted and how many pages came out; the processing log repeats it. Failed uploads no longer vanish after 3 seconds — the error stays on screen.
 - **Progress rows match your filenames.** The worker now reports files by the name you dropped, so status dots and errors line up even for converted or renamed uploads.
 
-Everything else — both download sources, the comix.to browser grab, packaging modes, and the `MDF/` layout — works exactly as in v1.8.
+Both download sources, the comix.to browser grab, packaging modes, and the `MDF/` layout are unchanged since v1.8.
 
 ---
 
@@ -129,11 +151,13 @@ Takes existing comic archives (`.cbz`, `.cbr`, `.cb7`, `.cbt`), a `.zip` archive
 
 **Volume & output name** — the output is normally named `Volume_XX` from the **Volume Number** field. If you leave Volume Number blank but the queued files have chapter numbers, the output is named after the chapter instead: a single chapter → `7.cbz`, several chapters → a `7-9` range. The "Folder/CBZ named:" preview updates live as you edit chapters.
 
+**Cover image (new in v2.0)** — drop an image on the Cover zone beside the Volume Number, or click it to browse. A thumbnail confirms what was accepted; ✕ removes it. The image is stored in `MDF/.mdf_uploads/` until the export runs, then cleaned up with the rest of the scratch space, and the zone resets ready for the next job. It is written into the output as `000_cover.{ext}` so it sorts first. Leaving the zone empty simply produces no cover.
+
 **Output**:
 - **Single CBZ** — all chapters packed into one file, pages renamed to `Chapter_XX_page_YYY.ext`, cover inserted as `000_cover.ext`
 - **Folder Tree** — same naming, written to a directory instead
 
-**After export** — the contents of `MDF/.mdf_uploads/` are wiped automatically (including any converted archives). The directory itself is kept so the next job can write into it. Cleanup is best-effort; a locked file is skipped silently rather than failing the export.
+**After export** — the contents of `MDF/.mdf_uploads/` are wiped automatically (including any converted archives and the uploaded cover). The directory itself is kept so the next job can write into it. Cleanup is best-effort; a locked file is skipped silently rather than failing the export.
 
 ---
 
