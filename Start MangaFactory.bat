@@ -1,10 +1,10 @@
 @echo off
 REM ============================================================
-REM  MangaFactory v2.0 - launcher
+REM  MangaFactory v2.2 - launcher
 REM  Starts the local server and opens the browser UI.
 REM  Close this window (or Ctrl+C) to stop the server.
 REM ============================================================
-title MangaFactory v2.0
+title MangaFactory v2.2
 
 REM UTF-8 for this window only, so the app's box-drawing banner renders
 REM as lines instead of mojibake.
@@ -43,7 +43,7 @@ if not defined PY (
 )
 
 echo.
-echo   MANGAFACTORY v2.0
+echo   MANGAFACTORY v2.2
 echo   -----------------
 echo   Starting server on http://localhost:5000
 echo   The browser will open in a moment.
@@ -57,7 +57,7 @@ echo   Press Ctrl+C to stop.
 echo.
 
 REM No browser call here - the app opens its own tab once Flask is up.
-%PY% "MangaFactory 2.0.py" %*
+%PY% "MangaFactory 2.2.py" %*
 
 echo.
 echo   MangaFactory has stopped.
