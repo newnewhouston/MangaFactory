@@ -1,12 +1,30 @@
-# MangaFactory v2.0
+# MangaFactory v2.2
 
 A single-file Python app with a browser UI for downloading manga and packaging it into CBZ files. No pip install, no virtual environment — just run the script.
 
 ```bash
-python "MangaFactory 2.0.py"
+python "MangaFactory 2.2.py"
 ```
 
+Or double-click `Start MangaFactory.bat`.
+
 Opens `http://localhost:5000` automatically. Press `Ctrl+C` to quit. Pass `--no-browser` to start the server without opening a browser window.
+
+---
+
+## What's new in v2.2
+
+**WeebCentral fetching works again.** WeebCentral changed the chapter links on its full-chapter-list view from absolute URLs (`href="https://weebcentral.com/chapters/…"`) to site-relative ones (`href="/chapters/…"`). The scraper matched only the absolute form, so it came back with zero chapters from pages that had hundreds. The site origin is now optional in the pattern, so both forms parse and a future flip back won't break it again.
+
+**An empty chapter list is now an error, not an empty success.** This is what made the breakage confusing rather than obvious: `/api/fetch` returned HTTP 200 with an empty `chapters` array, so the UI showed a series with nothing in it and said nothing was wrong. A parse that finds no chapters never means "this series has no chapters" — it means the markup moved. It now fails loudly, and reports how many bytes came back and how many chapter links were present, which is the detail that separates a broken selector from a blocked or genuinely empty page.
+
+Nothing else changed. The Cloudflare bypass, the series-title lookup, the page-image extraction, MangaDex, comix.to, and the CBZ Processor are all untouched.
+
+---
+
+## What's new in v2.1
+
+**Browser-tab icon.** The tab used to show the browser's generic globe, which made MangaFactory the odd one out beside its lettered siblings (DownloadFactory, SensorFactory, IntelFactory) in a row of pinned Factory tabs. It now carries its own mark: the logo reduced to the four elements that still read at 16px — taupe field, burnt-orange frame, near-black wordmark bar, navy rule. The icon is an inline `data:` URI SVG in the page head, so there is no image file to ship alongside the script and no `/favicon.ico` route to serve — the single-file app stays a single file. Same approach DownloadFactory and SensorFactory use.
 
 ---
 
@@ -68,7 +86,7 @@ MangaFactory auto-detects MangaDex and WeebCentral from the URL you paste. comix
 
 **MangaDex** — paste a series URL (`https://mangadex.org/title/…`) or bare UUID. Chapters are fetched via the MangaDex API, deduplicated across scanlation groups, and grouped by volume. Gap detection warns you when chapter numbers are non-consecutive.
 
-**WeebCentral** — paste a series URL (`https://weebcentral.com/series/…`). The full chapter list is scraped directly from the site. Works regardless of how the series labels its chapters — "Chapter 5", "Mission 133", "Episode 12" all parse correctly. Uses `cloudscraper` to handle Cloudflare protection transparently.
+**WeebCentral** — paste a series URL (`https://weebcentral.com/series/…`). The full chapter list is scraped directly from the site. Works regardless of how the series labels its chapters — "Chapter 5", "Mission 133", "Episode 12" all parse correctly. Uses `cloudscraper` to handle Cloudflare protection transparently. Because this is scraping rather than an API, it is the part of MangaFactory most likely to break when the site is redesigned; since v2.2 a failed parse reports itself instead of returning an empty list.
 
 **comix.to** — handled via a one-click browser grab rather than a pasted URL, because comix.to signs its API requests and encrypts the responses. See [comix.to · Browser Grab](#comixto--browser-grab).
 
