@@ -1,6 +1,23 @@
 #!/usr/bin/env python3
 """
-MangaFactory v2.0 — combined MangaDexFactory + CBZ Factory, single-file edition.
+MangaFactory v2.2 — combined MangaDexFactory + CBZ Factory, single-file edition.
+
+v2.2: WeebCentral fetch repair. The site started serving chapter links
+as site-relative hrefs (href="/chapters/ID") instead of absolute ones
+(href="https://weebcentral.com/chapters/ID"). The chapter-list scraper
+matched only the absolute form, so it found zero chapters on a page that
+had 368 of them, and /api/fetch happily returned 200 with an empty list —
+the UI showed a series with nothing in it and no error anywhere. The
+origin is now optional in the pattern, and an empty parse is treated as a
+failure rather than an empty success, so the next time WeebCentral
+changes its markup the app says so instead of going quiet.
+
+v2.1: browser-tab favicon. The tab showed the generic globe next to its
+lettered siblings (DownloadFactory, SensorFactory, IntelFactory), which
+made it the odd one out in a row of pinned Factory tabs. An inline
+data-URI SVG — taupe field, burnt-orange frame, black wordmark bar, navy
+rule — reduces the logo to the four marks that still read at 16px. No
+extra file to ship: the single-file app stays single-file.
 
 v2.0: drag-and-drop cover + visual redesign.
 
@@ -65,6 +82,19 @@ import sys
 import os
 import subprocess
 
+# Fix: the launch banner (and a few log lines) use box-drawing characters
+# and em dashes. Attached to a real console Python emits UTF-8 and they
+# render fine, but with stdout redirected — a .bat that tees to a log, a
+# scheduled task, any harness — Python falls back to the ANSI codepage
+# (cp1252 on this machine) and the very first ├ raised UnicodeEncodeError,
+# killing the app before app.run() was ever reached. Force UTF-8 on the
+# output streams and never let a print kill a run.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass  # pythonw: no console, stdout is None
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
 # v1.6: MangaFactory's own working state (bundled deps + CBZ scratch space)
@@ -74,6 +104,16 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _MDF_HOME = os.path.join(os.path.expanduser("~/Desktop/MangaFactory"), "MDF")
 os.makedirs(_MDF_HOME, exist_ok=True)
 _LIBS = os.path.join(_MDF_HOME, ".mdf_libs")
+
+# Fix: _LIBS joins sys.path BEFORE the dependency check, not after it.
+# The check ran first, so __import__() could not see the deps already
+# cached in .mdf_libs/ and pip was re-run on every single launch — a ~30s
+# stall each time, and a hard crash on a machine that is offline or behind
+# a proxy that blocks PyPI. Now the cache counts as installed, and the
+# "one-time setup" really is one time.
+if _LIBS not in sys.path:
+    sys.path.insert(0, _LIBS)
+
 REQUIRED = {"flask": "flask>=3.0", "requests": "requests>=2.31",
             "cloudscraper": "cloudscraper>=1.2"}
 
@@ -87,16 +127,26 @@ def _ensure_deps():
     if missing:
         print("MangaFactory: installing dependencies (one-time setup)...")
         os.makedirs(_LIBS, exist_ok=True)
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "--target", _LIBS,
-             "--quiet", "--disable-pip-version-check"] + missing
-        )
+        try:
+            subprocess.check_call(
+                [sys.executable, "-m", "pip", "install", "--target", _LIBS,
+                 "--quiet", "--disable-pip-version-check"] + missing
+            )
+        except (subprocess.CalledProcessError, OSError) as e:
+            # A bare traceback here reads as "the app is broken" when the
+            # real story is almost always no internet on first run.
+            print("\n  MangaFactory could not install its dependencies:")
+            print(f"    {', '.join(missing)}")
+            print(f"    {e}\n")
+            print("  This only needs to happen once, and it needs a network")
+            print("  connection. Check the connection and run it again, or")
+            print("  install them yourself with:")
+            print(f"    \"{sys.executable}\" -m pip install --target \"{_LIBS}\" "
+                  + " ".join(f'"{m}"' for m in missing) + "\n")
+            sys.exit(1)
         print("Done.\n")
 
 _ensure_deps()
-
-if _LIBS not in sys.path:
-    sys.path.insert(0, _LIBS)
 
 # ── Step 2: real imports ──────────────────────────────────────────────────────
 
@@ -334,11 +384,27 @@ def wc_get_all_chapters(series_id):
         timeout=30,
     )
     r.raise_for_status()
+    # v2.2: the origin is optional. WeebCentral used to render absolute
+    # chapter hrefs and now renders site-relative ones; both forms are
+    # accepted so a future flip back does not break this again.
     entries = re.findall(
-        r'href="https://weebcentral\.com/chapters/([A-Z0-9]+)"'
+        r'href="(?:https://weebcentral\.com)?/chapters/([A-Z0-9]+)"'
         r'.*?<span class="">([^<]+)</span>',
         r.text, re.DOTALL
     )
+    if not entries:
+        # An empty parse used to sail through as an empty-but-successful
+        # fetch. It never means "this series has no chapters" — it means
+        # the markup moved. Say so, and say whether links were present at
+        # all, which is the one bit that separates a selector break from
+        # a genuinely empty or blocked page.
+        hrefs = len(re.findall(r'/chapters/[A-Z0-9]+', r.text))
+        raise RuntimeError(
+            f"WeebCentral returned no parseable chapters for {series_id} "
+            f"({len(r.text)} bytes, {hrefs} chapter links seen). "
+            "The site's markup has probably changed — wc_get_all_chapters() "
+            "needs its pattern updated."
+        )
     chapters = []
     for ch_id, ch_label in reversed(entries):  # reverse so ch1 is first
         ch_label = ch_label.strip()
@@ -996,7 +1062,18 @@ HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MangaFactory v2.0</title>
+<title>MangaFactory v2.2</title>
+<!-- v2.1 favicon: the logo abstracted to what survives 16px — taupe field
+     (#CDBBB3), burnt-orange frame (#C1440E), near-black wordmark bar
+     (#16141A), navy rule (#22386B). Inline data URI, so no second file and
+     no /favicon.ico route; matches how DownloadFactory and SensorFactory
+     carry their marks.
+     Weights are deliberately heavier than the logo's: a first pass used the
+     logo's own proportions (2.2 frame stroke, 1.6 rule) and rasterising it
+     to 16px measured the frame at #c99179 and the rule at #b1a6a7 — both
+     blended into the taupe, the rule effectively gone. At stroke 3 / rule 3
+     every mark keeps its own colour at the pixel centre. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23CDBBB3'/%3E%3Crect x='4.5' y='4.5' width='23' height='23' fill='none' stroke='%23C1440E' stroke-width='3'/%3E%3Crect x='9' y='9.5' width='14' height='4.5' fill='%2316141A'/%3E%3Crect x='9' y='17' width='3' height='7' fill='%2322386B'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
@@ -1212,7 +1289,7 @@ HTML = r"""<!DOCTYPE html>
       <div class="logo-sub"><span class="logo-rule"></span>FACTORY</div>
     </div>
     <div class="tagline">Download · Process · Package</div>
-    <div class="version">V2.0</div>
+    <div class="version">V2.2</div>
   </header>
 
   <div class="tabs">
@@ -2649,7 +2726,7 @@ if __name__ == "__main__":
     # Ensure the default base + Downloaded/ + exported/ subdirs exist
     # so the very first run has a clean folder layout to start from.
     resolve_io_dirs(DOWNLOAD_BASE)
-    print("\n  MangaFactory v2.0")
+    print("\n  MangaFactory v2.2")
     print(f"  Base folder: {DOWNLOAD_BASE}")
     print(f"    ├─ {DOWNLOAD_SUBDIR}/   (raw downloads)")
     print(f"    ├─ {EXPORT_SUBDIR}/   (packaged CBZs)")
